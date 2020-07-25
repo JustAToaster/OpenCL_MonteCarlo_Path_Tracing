@@ -63,7 +63,7 @@ inline float4 NotOperator(float4 x){
 inline int TraceRay(float4 origin, float4 destination, float * t, float4 * normal){
 
 	int G[] = {247570, 280596, 280600, 249748, 18578, 18577, 231184, 16, 16};
-
+	//printf("Does it even get here tracing\n");
 	*t = 1e9;
 	int m = 0;
 	float p = -origin.z / destination.z;
@@ -72,7 +72,6 @@ inline int TraceRay(float4 origin, float4 destination, float * t, float4 * norma
 		*normal = (float4)(0.0f, 0.0f, 1.0f, 0.0f);
 		m = 1;
 	}
-	
 	for(int k = 19; k--;){
 		for(int j = 9; j--;){
 			if (G[j] & 1 << k){
@@ -98,24 +97,25 @@ inline int TraceRay(float4 origin, float4 destination, float * t, float4 * norma
 }
 
 inline float4 Sample(float4 origin, float4 destination, float4 randValues){
-	float * t;
-	float4 * normal;
-	int match = TraceRay(origin, destination, t, normal);
+	float t;
+	float4 normal;
+	int match = TraceRay(origin, destination, &t, &normal);
+	//printf("Does it even get here sampling\n");
 	if (!match){
 		//No sphere found and the ray goes upward: Generate a sky color
 		return (float4)(0.7f, 0.6f, 1, 0) * pow(1 - destination.z, 4);
 	}
 
 	//A sphere was maybe hit
-	float4 intersection = origin + destination * (*t);
+	float4 intersection = origin + destination * t;
 	float4 light_dir = NotOperator((float4)(9 + randValues.x, 9 + randValues.y, 16, 0) + intersection * -1);
-	float4 half_vec = destination + *normal * (ScalarProduct(*normal, destination) * -2);
+	float4 half_vec = destination + normal * (ScalarProduct(normal, destination) * -2);
 
 	//Calculate the lambertian factor
-	float lamb_f = ScalarProduct(light_dir,(*normal));
+	float lamb_f = ScalarProduct(light_dir, normal);
 
 	//Calculate illumination factor (lambertian coefficient > 0 or in shadow)?
-	if(lamb_f < 0 || TraceRay(intersection, light_dir, t, normal)){
+	if(lamb_f < 0 || TraceRay(intersection, light_dir, &t, &normal)){
 		lamb_f = 0;
 	}
 
@@ -134,19 +134,20 @@ inline float4 Sample(float4 origin, float4 destination, float4 randValues){
 
 kernel void pathTracer(global uchar4 * img, float4 cam_forward, float4 cam_up, float4 cam_right, float4 cam_something, uint4 seeds){
 	float4 color = (float4)(13, 13, 13, 0);
-	int i = get_global_id(0);
-	int j = get_global_id(1);
-	printf("Does it even get here %d %d\n", i, j);
+	int i = get_global_size(0) - get_global_id(0);
+	int j = get_global_size(1) - get_global_id(1);
 	mwc64xvec4_state_t rng;
 	MWC64XVEC4_Seeding(&rng, seeds);
 	float4 randValues1 = MWC64XVEC4(&rng, 0.0f, 1.0f);
 	float4 randValues2 = MWC64XVEC4(&rng, 0.0f, 1.0f);
+	//printf("Does it even get here %d %d\n", i, j);
 	for(int r = 64; r--;){
 		float4 delta = cam_up * (randValues1.x - 0.5f) * 99.0f + cam_right * (randValues1.y - 0.5f) * 99.0f;
 		color = Sample((float4)(17, 16, 8, 255) + delta, NotOperator(delta * -1 + (cam_up * (randValues1.z + i) + cam_right * (j + randValues1.w + cam_something)) * 16.0f), randValues2) * 3.5f + color;
 	}
-	printf("Pixel %d all done\n", j*get_global_size(0)+i);
+	//printf("Pixel %d all done\n", j*get_global_size(0)+i);
 	color.w = 255;
+	printf("Color %d %d: %f, %f, %f, %f\n", i, j, color.x, color.y, color.z, color.w);
 	img[j*get_global_size(0)+i]=convert_uchar4(color);
 }
 

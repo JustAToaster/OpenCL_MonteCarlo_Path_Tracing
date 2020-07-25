@@ -154,7 +154,7 @@ int main(int argc, char* argv[]) {
         color = Sample(v(17, 16, 8) + delta, !(delta * -1 + (cam_up * (R() + x) + cam_right * (y + R()) + c) * 16)) * 3.5 + color;
       }
       //printf("Pixel %d %d all done\n", x, y);
-      WriteColor((uchar*)resultInfo.data, x, y, width, height, color);
+      WriteColor((uchar*)resultInfo.data, width-x, height-y, width, height, color);
     }
   //printf("cam_forward: %f %f %f\n", cam_forward.x, cam_forward.y, cam_forward.z);
   //printf("cam_up: %f %f %f\n", cam_up.x, cam_up.y, cam_up.z);

@@ -176,7 +176,7 @@ int main(int argc, char* argv[]){
 		fprintf(stderr, "error writing %s\n", imageName);
 		exit(1);
 	}
-	else printf("Successfully created render image %s in the current directory\n", imageName);
+	else printf("\nSuccessfully created render image %s in the current directory\n\n", imageName);
 
 	double runtime_initRender_ms = runtime_ms(initRender_evt);
 	double runtime_spt_ms = runtime_ms(spt_evt);
