@@ -3,6 +3,9 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
+
+#include "../pamalign.h"
 
 struct v {
   float x, y, z;
@@ -97,21 +100,78 @@ v Sample(v origin, v destination) {
   //Attenuate color by 50% since it is bouncing (* .5)
   return v(color, color, color) + Sample(intersection, half_vec) * .5;
 }
-int main() {
-  printf("P6 512 512 255 ");
+
+void WriteColor(uchar * imgData, int x, int y, int width, int height, v color){
+	int index = 4*(y*width+x);
+  imgData[index] = (uchar)color.x;
+  imgData[index+1] = (uchar)color.y;
+  imgData[index+2] = (uchar)color.z;
+  imgData[index+3] = 255;
+}
+
+void createBlankImage(uchar * imgData, size_t n){
+	for(int i=0; i<n; i+=4){
+		imgData[i]=255;
+		imgData[i+1]=255;
+		imgData[i+2]=255;
+		imgData[i+3]=255;
+	}
+}
+
+int main(int argc, char* argv[]) {
+  int width = 256, height = 256;
+  if(argc > 1){
+    width = atoi(argv[1]);
+  }
+  if (argc > 2){
+    height = atoi(argv[2]);
+  }
+
+  const char * imageName = "resultCPU.ppm";
+  struct imgInfo resultInfo;
+	resultInfo.channels = 4;
+	resultInfo.depth = 8;
+	resultInfo.maxval = 0xff;
+	resultInfo.width = width;
+	resultInfo.height = height;	
+	resultInfo.data_size = resultInfo.width*resultInfo.height*resultInfo.channels;
+	resultInfo.data = malloc(resultInfo.data_size);
+  createBlankImage((uchar*)resultInfo.data, resultInfo.data_size);
+	printf("Processing image %dx%d with data size %ld bytes\n", resultInfo.width, resultInfo.height, resultInfo.data_size);
 
   v cam_forward = !v(-6, -16, 0);
   v cam_up = !(v(0, 0, 1) ^ cam_forward) * .002;
   v cam_right = !(cam_forward ^ cam_up) * .002, c = (cam_up + cam_right) * -256 + cam_forward;
 
-  for (int y = 512; y--;)
-    for (int x = 512; x--;) {
+  clock_t start_render, end_render;
+
+  start_render = clock();
+  for (int y = height; y--;)
+    for (int x = width; x--;) {
       v color(13, 13, 13);
       for (int r = 64; r--;) {
         v delta = cam_up * (R() - .5) * 99 + cam_right * (R() - .5) * 99;
         color = Sample(v(17, 16, 8) + delta, !(delta * -1 + (cam_up * (R() + x) + cam_right * (y + R()) + c) * 16)) * 3.5 + color;
       }
-      printf("%c%c%c", (int)color.x, (int)color.y, (int)color.z);
+      //printf("Pixel %d %d all done\n", x, y);
+      WriteColor((uchar*)resultInfo.data, x, y, width, height, color);
     }
+  //printf("cam_forward: %f %f %f\n", cam_forward.x, cam_forward.y, cam_forward.z);
+  //printf("cam_up: %f %f %f\n", cam_up.x, cam_up.y, cam_up.z);
+  //printf("cam_right: %f %f %f\n", cam_right.x, cam_right.y, cam_right.z);
+  end_render = clock();
+  int err = save_pam(imageName, &resultInfo);
+	if (err != 0) {
+		fprintf(stderr, "error writing %s\n", imageName);
+		exit(1);
+	}
+	else printf("Successfully created render image %s in the current directory\n", imageName);
+
+  double runtime_rendering_ms = (end_render - start_render)*1.0e3/CLOCKS_PER_SEC;
+  double rendering_bw_gbs = width*height*sizeof(float)/1.0e6/runtime_rendering_ms;
+
+  printf("rendering (host) : %d float in %gms: %g GB/s\n",
+		width*height, runtime_rendering_ms, rendering_bw_gbs);
+
   return EXIT_SUCCESS;
 }

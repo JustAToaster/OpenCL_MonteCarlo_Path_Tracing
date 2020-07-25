@@ -1,0 +1,152 @@
+//MWC64x, an RNG made by David B. Tomas, with custom seeding
+//Source: http://cas.ee.ic.ac.uk/people/dt10/research/rngs-gpu-mwc64x.html
+
+typedef struct{ uint4 x; uint4 c; } mwc64xvec4_state_t;
+
+inline float4 MWC64XVEC4(mwc64xvec4_state_t *s, float leftLimit, float rightLimit)
+{
+    enum{ MWC64XVEC4_A = 4294883355U };
+    uint4 x=s->x, c=s->c;
+    uint4 res=x^c;                     // Calculate the result
+    uint4 hi=mul_hi(x,MWC64XVEC4_A);              // Step the RNG
+    x=x*MWC64XVEC4_A+c;
+    c=hi+convert_uint4(x<c);
+    s->x=x;
+    s->c=c;             // Pack the state back up
+    return leftLimit + convert_float4(res)*((rightLimit - leftLimit)/4294967295);
+}
+
+//Another simple RNG (often used in hashing) to randomize local id or global id
+inline uint randomizeId(uint id)
+{
+        id = (id ^ 61) ^ (id >> 16);
+        id *= 9;
+        id = id ^ (id >> 4);
+        id *= 0x27d4eb2d;
+        id = id ^ (id >> 15);
+        return id;
+ }
+
+//Mix seeds with randomized global ids
+inline void MWC64XVEC4_Seeding(mwc64xvec4_state_t *s, uint4 seeds){
+	const int gi = get_global_id(0) + 1;
+	//const int li = get_local_id(0) + 1;
+	const int li = get_global_id(1) + 1;
+	s->x = (uint4)((seeds.x) ^ randomizeId(gi&li), (seeds.y*seeds.z) ^ randomizeId(gi&li), (seeds.y*(seeds.w & 131071)) ^ randomizeId(gi+li), ((seeds.x & 131071)*seeds.y) ^ randomizeId(gi+li));
+	s->c = (uint4)((seeds.w) ^ randomizeId(gi+li), (seeds.w ^ seeds.x) ^ randomizeId(gi+li), (seeds.z*seeds.x) ^ randomizeId(gi & li), (seeds.z*(seeds.w & 131071)) ^ randomizeId(gi & li));
+}
+
+kernel void imginit_buf(global uchar4 * img)
+{
+	const int j = get_global_id(1);
+	const int i = get_global_id(0);
+	const int size = get_global_size(0);
+
+	img[j*size+i] = (uchar4)(255, 255, 255, 255);
+}
+
+//Defined as operator% in the simple CPU tracer
+inline float ScalarProduct(float4 x, float4 y){
+	return x.s0 * y.s0 + x.s1 * y.s1 + x.s2 * y.s2;
+}
+
+//Defined as operator^ in the simple CPU tracer
+inline float4 CrossProduct(float4 x, float4 y){
+	return (float4)(x.s1 * y.s2 - x.s2 * y.s1, x.s2 * y.s0 - x.s0 * y.s2, x.s0 * y.s1 - x.s1 * y.s0, 0.0f);
+}
+
+//Defined as operator! in the simple CPU tracer
+inline float4 NotOperator(float4 x){
+	return x * (1/sqrt(ScalarProduct(x, x)));
+}
+
+inline int TraceRay(float4 origin, float4 destination, float * t, float4 * normal){
+
+	int G[] = {247570, 280596, 280600, 249748, 18578, 18577, 231184, 16, 16};
+
+	*t = 1e9;
+	int m = 0;
+	float p = -origin.z / destination.z;
+	if(.01f < p){
+		*t = p;
+		*normal = (float4)(0.0f, 0.0f, 1.0f, 0.0f);
+		m = 1;
+	}
+	
+	for(int k = 19; k--;){
+		for(int j = 9; j--;){
+			if (G[j] & 1 << k){
+				float4 p = origin + (float4)(-k, 0.0f, -j-4.0f, 0.0f);
+				float b = ScalarProduct(p, destination);
+				float c = ScalarProduct(p, p - 1);
+				float q = b * b - c;
+
+				//Does the ray hit the sphere?
+				if(q > 0){
+					float s = -b - sqrt(q);
+					//It does, compute the distance camera-sphere
+					if(s < (*t) && s > 0.01f){
+						*t = s;
+						*normal = NotOperator(p + destination * (*t));
+						m = 2;
+					}
+				}
+			}
+		}
+	}
+	return m;
+}
+
+inline float4 Sample(float4 origin, float4 destination, float4 randValues){
+	float * t;
+	float4 * normal;
+	int match = TraceRay(origin, destination, t, normal);
+	if (!match){
+		//No sphere found and the ray goes upward: Generate a sky color
+		return (float4)(0.7f, 0.6f, 1, 0) * pow(1 - destination.z, 4);
+	}
+
+	//A sphere was maybe hit
+	float4 intersection = origin + destination * (*t);
+	float4 light_dir = NotOperator((float4)(9 + randValues.x, 9 + randValues.y, 16, 0) + intersection * -1);
+	float4 half_vec = destination + *normal * (ScalarProduct(*normal, destination) * -2);
+
+	//Calculate the lambertian factor
+	float lamb_f = ScalarProduct(light_dir,(*normal));
+
+	//Calculate illumination factor (lambertian coefficient > 0 or in shadow)?
+	if(lamb_f < 0 || TraceRay(intersection, light_dir, t, normal)){
+		lamb_f = 0;
+	}
+
+	float color = pow(ScalarProduct(light_dir, half_vec) * (lamb_f > 0), 99);
+
+	if(match & 1){
+		//No sphere was hit and the ray was going downward: Generate a floor color
+		intersection = intersection * 0.2f;
+		return ((int)(ceil(intersection.x) + ceil(intersection.y)) & 1 ? (float4)(3, 1, 1, 0) : (float4)(3, 3, 3, 0)) * (lamb_f * 0.2f + 0.1f);
+	}
+
+	//m == 2 A sphere was hit. Cast a ray bouncing from the sphere surface.
+	//Attenuate color by 50% since it is bouncing (* 0.5)
+	return (float4)(color, color, color, 0) + Sample(intersection, half_vec, randValues) * 0.5f;
+}
+
+kernel void pathTracer(global uchar4 * img, float4 cam_forward, float4 cam_up, float4 cam_right, float4 cam_something, uint4 seeds){
+	float4 color = (float4)(13, 13, 13, 0);
+	int i = get_global_id(0);
+	int j = get_global_id(1);
+	printf("Does it even get here %d %d\n", i, j);
+	mwc64xvec4_state_t rng;
+	MWC64XVEC4_Seeding(&rng, seeds);
+	float4 randValues1 = MWC64XVEC4(&rng, 0.0f, 1.0f);
+	float4 randValues2 = MWC64XVEC4(&rng, 0.0f, 1.0f);
+	for(int r = 64; r--;){
+		float4 delta = cam_up * (randValues1.x - 0.5f) * 99.0f + cam_right * (randValues1.y - 0.5f) * 99.0f;
+		color = Sample((float4)(17, 16, 8, 255) + delta, NotOperator(delta * -1 + (cam_up * (randValues1.z + i) + cam_right * (j + randValues1.w + cam_something)) * 16.0f), randValues2) * 3.5f + color;
+	}
+	printf("Pixel %d all done\n", j*get_global_size(0)+i);
+	color.w = 255;
+	img[j*get_global_size(0)+i]=convert_uchar4(color);
+}
+
