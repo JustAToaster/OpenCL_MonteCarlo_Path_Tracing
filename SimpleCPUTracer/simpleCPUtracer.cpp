@@ -38,6 +38,7 @@ int TraceRay(v origin, v destination, float &t, v &normal) {
   t = 1e9;
   int m = 0;
   float p = -origin.z / destination.z;
+  //printf("p1: %f\n", p);
   if (.01 < p) {
       t = p;
       normal = v(0, 0, 1);
@@ -51,6 +52,7 @@ int TraceRay(v origin, v destination, float &t, v &normal) {
         float b = p % destination;
         float c = p % p - 1;
         float q = b * b - c;
+        //printf("b: %f\n", b);
 
           //Does the ray hit the sphere ?
         if (q > 0) {
@@ -76,7 +78,9 @@ v Sample(v origin, v destination) {
 
   //A sphere was maybe hit.
   v intersection = origin + destination * t;
+  //printf("destination: %f %f %f\n", destination.x, destination.y, destination.z);
   v light_dir = !(v(9 + R(), 9 + R(), 16) + intersection * -1);
+  //printf("lightdir: %f %f %f\n", light_dir.x, light_dir.y, light_dir.z);
   v half_vec = destination + normal * (normal % destination * -2);
 
   //Calculated the lambertian factor
@@ -141,7 +145,9 @@ int main(int argc, char* argv[]) {
 
   v cam_forward = !v(-6, -16, 0);
   v cam_up = !(v(0, 0, 1) ^ cam_forward) * .002;
-  v cam_right = !(cam_forward ^ cam_up) * .002, c = (cam_up + cam_right) * -256 + cam_forward;
+  v cam_right = !(cam_forward ^ cam_up) * .002, cam_something = (cam_up + cam_right) * -256 + cam_forward;
+
+  
 
   clock_t start_render, end_render;
 
@@ -151,14 +157,13 @@ int main(int argc, char* argv[]) {
       v color(13, 13, 13);
       for (int r = 64; r--;) {
         v delta = cam_up * (R() - .5) * 99 + cam_right * (R() - .5) * 99;
-        color = Sample(v(17, 16, 8) + delta, !(delta * -1 + (cam_up * (R() + x) + cam_right * (y + R()) + c) * 16)) * 3.5 + color;
+        //printf("%d %d delta: %f\n", x, y, delta.x);
+        color = Sample(v(17, 16, 8) + delta, !(delta * -1 + (cam_up * (R() + x) + cam_right * (y + R()) + cam_something) * 16)) * 3.5 + color;
       }
-      //printf("Pixel %d %d all done\n", x, y);
+      printf("Pixel %d %d, color %f %f %f\n", x, y, color.x, color.y, color.z);
       WriteColor((uchar*)resultInfo.data, width-x, height-y, width, height, color);
     }
-  //printf("cam_forward: %f %f %f\n", cam_forward.x, cam_forward.y, cam_forward.z);
-  //printf("cam_up: %f %f %f\n", cam_up.x, cam_up.y, cam_up.z);
-  //printf("cam_right: %f %f %f\n", cam_right.x, cam_right.y, cam_right.z);
+  printf("Cam values:\nCam_forward %f %f %f\nCam_up %f %f %f\nCam_right %f %f %f\n Cam_something %f %f %f\n", cam_forward.x, cam_forward.y, cam_forward.z, cam_up.x, cam_up.y, cam_up.z, cam_right.x, cam_right.y, cam_right.z, cam_something.x, cam_something.y, cam_something.z);
   end_render = clock();
   int err = save_pam(imageName, &resultInfo);
 	if (err != 0) {

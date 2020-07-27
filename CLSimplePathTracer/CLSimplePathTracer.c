@@ -156,10 +156,18 @@ int main(int argc, char* argv[]){
 
 	cl_float4 cam_forward = { .x = -6, .y = -16, .z = 0, .w = 0 };
 	cam_forward = NotOperator(cam_forward);
-	cl_float4 cam_up = NotOperator(ScalarTimesVector(0.002f, CrossProduct(zVect, cam_forward)));
-	cl_float4 cam_right = NotOperator(ScalarTimesVector(0.002f, CrossProduct(cam_forward, cam_up)));
+	cl_float4 cam_up = ScalarTimesVector(0.002, NotOperator(CrossProduct(zVect, cam_forward)));
+	cl_float4 cam_right = ScalarTimesVector(0.002, NotOperator(CrossProduct(cam_forward, cam_up)));
 
 	cl_float4 cam_something = VectorSum(ScalarTimesVector((float)(-256), VectorSum(cam_up, cam_right)), cam_forward);
+
+	/*
+	cl_float4 cam_up = { .x = 0.001873f, .y = -0.000702f, .z = 0.0f, .w = 0 };
+	cl_float4 cam_right = { .x = 0.0f, .y = 0.0f, .z = 0.002f, .w = 0 };
+	cl_float4 cam_something = { .x = -0.830524f, .y = -0.756554f, .z = -0.512f, .w = 0 };
+	*/
+
+	printf("Cam values:\nCam_forward %f %f %f\nCam_up %f %f %f\nCam_right %f %f %f\n Cam_something %f %f %f\n", cam_forward.x, cam_forward.y, cam_forward.z, cam_up.x, cam_up.y, cam_up.z, cam_right.x, cam_right.y, cam_right.z, cam_something.x, cam_something.y, cam_something.z);
 
 	cl_event spt_evt = pathTracer(spt_k, que, d_render, seeds, cam_forward, cam_up, cam_right, cam_something, resultInfo.width, resultInfo.height);
 
