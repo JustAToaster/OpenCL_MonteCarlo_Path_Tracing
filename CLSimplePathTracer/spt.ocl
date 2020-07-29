@@ -65,7 +65,7 @@ inline int TraceRay(float4 origin, float4 destination, float * t, float4 * norma
 			if (G[j] & 1 << k){
 				float4 p = origin + (float4)(-k, 0, -j - 4, 0);
 				float b = dot(p, destination);
-				float c = dot(p, p - 1);
+				float c = dot(p, p) - 1;
 				float q = b * b - c;
 
 				//Does the ray hit the sphere?

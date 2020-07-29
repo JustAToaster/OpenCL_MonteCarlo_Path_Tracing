@@ -172,8 +172,8 @@ int main(int argc, char* argv[]){
 	printf("Cam values:\nCam_forward %f %f %f\nCam_up %f %f %f\nCam_right %f %f %f\n eye_offset %f %f %f\n", cam_forward.x, cam_forward.y, cam_forward.z, cam_up.x, cam_up.y, cam_up.z, cam_right.x, cam_right.y, cam_right.z, eye_offset.x, eye_offset.y, eye_offset.z);
 
 	//Spheres
-	//cl_int G[9] = {247570, 280596, 280600, 249748, 18578, 18577, 231184, 16, 16};
-	cl_int G[9] = {0, 0, 0, 0, 1024, 0, 0, 0, 0};
+	cl_int G[9] = {247570, 280596, 280600, 249748, 18578, 18577, 231184, 16, 16};
+	//cl_int G[9] = {2048, 0, 0, 0, 0, 0, 0, 0, 0};
 
 	cl_mem d_G = clCreateBuffer(ctx,
 		CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
