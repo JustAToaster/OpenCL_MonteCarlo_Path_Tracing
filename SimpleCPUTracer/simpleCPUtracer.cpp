@@ -160,7 +160,7 @@ int main(int argc, char* argv[]) {
         //printf("%d %d delta: %f\n", x, y, delta.x);
         color = Sample(v(17, 16, 8) + delta, !(delta * -1 + (cam_up * (R() + x) + cam_right * (y + R()) + cam_something) * 16)) * 3.5 + color;
       }
-      printf("Pixel %d %d, color %f %f %f\n", x, y, color.x, color.y, color.z);
+      //printf("Pixel %d %d, color %f %f %f\n", x, y, color.x, color.y, color.z);
       WriteColor((uchar*)resultInfo.data, width-x, height-y, width, height, color);
     }
   printf("Cam values:\nCam_forward %f %f %f\nCam_up %f %f %f\nCam_right %f %f %f\n Cam_something %f %f %f\n", cam_forward.x, cam_forward.y, cam_forward.z, cam_up.x, cam_up.y, cam_up.z, cam_right.x, cam_right.y, cam_right.z, cam_something.x, cam_something.y, cam_something.z);

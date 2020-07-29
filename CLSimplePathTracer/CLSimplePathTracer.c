@@ -67,8 +67,8 @@ cl_event imginit(cl_kernel imginit_k, cl_command_queue que, cl_mem d_render, int
 }
 
 //Setting up the kernel to render the image
-cl_event pathTracer(cl_kernel spt_k, cl_command_queue que, cl_mem d_render, 
-	cl_uint4 seeds, cl_float4 cam_forward, cl_float4 cam_up, cl_float4 cam_right, cl_float4 cam_something, 
+cl_event pathTracer(cl_kernel spt_k, cl_command_queue que, cl_mem d_render, cl_mem d_G, 
+	cl_uint4 seeds, cl_float4 cam_forward, cl_float4 cam_up, cl_float4 cam_right, cl_float4 eye_offset, 
 	cl_int plotWidth, cl_int plotHeight){
 
 	const size_t gws[] = { plotWidth, plotHeight };
@@ -79,13 +79,15 @@ cl_event pathTracer(cl_kernel spt_k, cl_command_queue que, cl_mem d_render,
 	cl_uint i = 0;
 	err = clSetKernelArg(spt_k, i++, sizeof(d_render), &d_render);
 	ocl_check(err, "set path tracer arg %d", i-1);
+	err = clSetKernelArg(spt_k, i++, sizeof(d_G), &d_G);
+	ocl_check(err, "set path tracer arg %d", i-1);
 	err = clSetKernelArg(spt_k, i++, sizeof(cam_forward), &cam_forward);
 	ocl_check(err, "set path tracer arg %d", i-1);
 	err = clSetKernelArg(spt_k, i++, sizeof(cam_up), &cam_up);
 	ocl_check(err, "set path tracer arg %d", i-1);
 	err = clSetKernelArg(spt_k, i++, sizeof(cam_right), &cam_right);
 	ocl_check(err, "set path tracer arg %d", i-1);
-	err = clSetKernelArg(spt_k, i++, sizeof(cam_something), &cam_something);
+	err = clSetKernelArg(spt_k, i++, sizeof(eye_offset), &eye_offset);
 	ocl_check(err, "set path tracer arg %d", i-1);
 	err = clSetKernelArg(spt_k, i++, sizeof(seeds), &seeds);
 	ocl_check(err, "set path tracer arg %d", i-1);
@@ -159,17 +161,27 @@ int main(int argc, char* argv[]){
 	cl_float4 cam_up = ScalarTimesVector(0.002, NotOperator(CrossProduct(zVect, cam_forward)));
 	cl_float4 cam_right = ScalarTimesVector(0.002, NotOperator(CrossProduct(cam_forward, cam_up)));
 
-	cl_float4 cam_something = VectorSum(ScalarTimesVector((float)(-256), VectorSum(cam_up, cam_right)), cam_forward);
+	cl_float4 eye_offset = VectorSum(ScalarTimesVector((float)(-256), VectorSum(cam_up, cam_right)), cam_forward);
 
 	/*
 	cl_float4 cam_up = { .x = 0.001873f, .y = -0.000702f, .z = 0.0f, .w = 0 };
 	cl_float4 cam_right = { .x = 0.0f, .y = 0.0f, .z = 0.002f, .w = 0 };
-	cl_float4 cam_something = { .x = -0.830524f, .y = -0.756554f, .z = -0.512f, .w = 0 };
+	cl_float4 eye_offset = { .x = -0.830524f, .y = -0.756554f, .z = -0.512f, .w = 0 };
 	*/
 
-	printf("Cam values:\nCam_forward %f %f %f\nCam_up %f %f %f\nCam_right %f %f %f\n Cam_something %f %f %f\n", cam_forward.x, cam_forward.y, cam_forward.z, cam_up.x, cam_up.y, cam_up.z, cam_right.x, cam_right.y, cam_right.z, cam_something.x, cam_something.y, cam_something.z);
+	printf("Cam values:\nCam_forward %f %f %f\nCam_up %f %f %f\nCam_right %f %f %f\n eye_offset %f %f %f\n", cam_forward.x, cam_forward.y, cam_forward.z, cam_up.x, cam_up.y, cam_up.z, cam_right.x, cam_right.y, cam_right.z, eye_offset.x, eye_offset.y, eye_offset.z);
 
-	cl_event spt_evt = pathTracer(spt_k, que, d_render, seeds, cam_forward, cam_up, cam_right, cam_something, resultInfo.width, resultInfo.height);
+	//Spheres
+	//cl_int G[9] = {247570, 280596, 280600, 249748, 18578, 18577, 231184, 16, 16};
+	cl_int G[9] = {0, 0, 0, 0, 1024, 0, 0, 0, 0};
+
+	cl_mem d_G = clCreateBuffer(ctx,
+		CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
+		sizeof(G), G,
+		&err);
+	ocl_check(err, "create buffer d_G");
+
+	cl_event spt_evt = pathTracer(spt_k, que, d_render, d_G, seeds, cam_forward, cam_up, cam_right, eye_offset, resultInfo.width, resultInfo.height);
 
 	cl_event getRender_evt;
 
