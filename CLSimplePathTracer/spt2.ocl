@@ -3,9 +3,11 @@
 
 typedef struct{ uint2 x; uint2 c; } mwc64xvec2_state_t;
 
+enum{ MWC64XVEC2_A = 4294883355U };
+enum{ MWC64XVEC2_M = 18446383549859758079UL };
+
 inline float2 MWC64XVEC2(mwc64xvec2_state_t *s, float leftLimit, float rightLimit)
 {
-    enum{ MWC64XVEC2_A = 4294883355U };
     uint2 x=s->x, c=s->c;
     uint2 res=x^c;                     // Calculate the result
     uint2 hi=mul_hi(x,MWC64XVEC2_A);              // Step the RNG
@@ -29,11 +31,11 @@ inline uint randomizeId(uint id)
 
 //Mix seeds with randomized global ids
 inline void MWC64XVEC2_Seeding(mwc64xvec2_state_t *s, uint4 seeds){
-	const int gi = get_global_id(0) + 1;
+	const int gi = get_global_id(0);
 	//const int li = get_local_id(0) + 1;
-	const int li = get_global_id(1) + 1;
+	const int li = get_global_id(1);
 	s->x = (uint2)((seeds.x) ^ randomizeId(gi&li), (seeds.y) ^ randomizeId(gi+li));
-	s->c = (uint2)((seeds.z) ^ randomizeId(gi+li), (seeds.w) ^ randomizeId(gi&li));
+	s->c = (uint2)((seeds.w) ^ randomizeId(gi+li), (seeds.z) ^ randomizeId(gi&li));
 }
 
 kernel void imginit_buf(global uchar4 * img)
@@ -50,11 +52,11 @@ inline float4 NotOperator(float4 x){
 	return ((1/sqrt(dot(x, x))) * x);
 }
 
-inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal, global int * G){
+inline int TraceRay(float4 origin, float4 destination, float * t, float4 * normal, global int * G){
 
 	*t = 1e9;
 	int m = 0;
-	float p1 = -origin.z / direction.z;
+	float p1 = -origin.z / destination.z;
 	if(.01f < p1){
 		*t = p1;
 		*normal = (float4)(0, 0, 1, 0);
@@ -64,7 +66,7 @@ inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal,
 		for(int j = 9; j--;){
 			if (G[j] & 1 << k){
 				float4 p = origin + (float4)(-k, 0, -j - 4, 0);
-				float b = dot(p, direction);
+				float b = dot(p, destination);
 				float c = dot(p, p) - 1;
 				float q = b * b - c;
 
@@ -74,7 +76,7 @@ inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal,
 					//It does, compute the distance camera-sphere
 					if(s < (*t) && s > 0.01f){
 						*t = s;
-						*normal = NotOperator(p + direction * (*t));
+						*normal = NotOperator(p + destination * (*t));
 						m = 2;
 					}
 				}
@@ -84,7 +86,7 @@ inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal,
 	return m;
 }
 
-inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * rng, global int * G){
+inline float4 Sample(float4 * origin, float4 * destination, mwc64xvec2_state_t * rng, global int * G){
 	//Recursion vars
 	float4 colorFact = (float4)(0, 0, 0, 0);
 	int divFact = 1;
@@ -97,16 +99,16 @@ inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * r
 	int match;
 	while(true){
 		randValues = MWC64XVEC2(rng, 0.0f, 1.0f);
-		match = TraceRay(*origin, *direction, &t, &normal, G);
+		match = TraceRay(*origin, *destination, &t, &normal, G);
 		if (!match){
 			//No sphere found and the ray goes upward: Generate a sky color
-			return colorFact + (float4)(0.7f, 0.6f, 1.0f, 0) * pow(1 - (*direction).z, 4) / divFact;
+			return colorFact + (float4)(0.7f, 0.6f, 1.0f, 0) * pow(1 - (*destination).z, 4) / divFact;
 		}
 
 		//A sphere was maybe hit
-		intersection = (*origin) + (*direction) * t;
+		intersection = (*origin) + (*destination) * t;
 		light_dir = NotOperator((float4)(9 + randValues.x, 9 + randValues.y, 16, 0) + intersection * (-1));
-		half_vec = (*direction) + normal * (dot(normal, *direction) * (-2));
+		half_vec = (*destination) + normal * (dot(normal, *destination) * (-2));
 
 		//Calculate the lambertian factor
 		lamb_f = dot(light_dir, normal);
@@ -129,7 +131,7 @@ inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * r
 		else{
 			colorFact += (float4)(color, color, color, 0) * divFact;
 			*origin = intersection;
-			*direction = half_vec;
+			*destination = half_vec;
 			divFact *= 2;
 		}
 	}
@@ -141,14 +143,13 @@ kernel void pathTracer(global uchar4 * img, global int * G, float4 cam_forward, 
 	int j = get_global_id(1);
 	mwc64xvec2_state_t rng;
 	MWC64XVEC2_Seeding(&rng, seeds);
-	float2 randValues1 = MWC64XVEC2(&rng, 0.0f, 1.0f);
-	float2 randValues2 = MWC64XVEC2(&rng, 0.0f, 1.0f);
-	float4 origin, direction, delta;
+	float4 randValues1 = (float4)(MWC64XVEC2(&rng, 0.0f, 1.0f), MWC64XVEC2(&rng, 0.0f, 1.0f));
+	float4 origin, destination, delta;
 	for(int r = 64; r--;){
 		delta = cam_up * ((randValues1.x - 0.5f) * 99) + cam_right * ((randValues1.y - 0.5f) * 99);
 		origin = (float4)(17, 16, 8, 0) + delta;
-		direction = NotOperator(delta * (-1) + (cam_up * (randValues2.x + i) + cam_right * (j + randValues2.y) + eye_offset) * 16);
-		color = Sample(&origin, &direction, &rng, G) * 3.5f + color;
+		destination = NotOperator(delta * (-1) + (cam_up * (randValues1.z + i) + cam_right * (j + randValues1.w) + eye_offset) * 16);
+		color = Sample(&origin, &destination, &rng, G) * 3.5f + color;
 	}
 	color.w = 255;
 	//printf("Color %d %d: %f, %f, %f, %f\n", i, j, color.x, color.y, color.z, color.w);
