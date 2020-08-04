@@ -27,13 +27,11 @@ inline uint randomizeId(uint id)
         return id;
  }
 
-//Mix seeds with randomized global ids
+//Mix seeds with randomized id
 inline void MWC64XVEC2_Seeding(mwc64xvec2_state_t *s, uint4 seeds){
-	const int gi = get_global_id(0) + 1;
-	//const int li = get_local_id(0) + 1;
-	const int li = get_global_id(1) + 1;
-	s->x = (uint2)((seeds.x) ^ randomizeId(gi&li), (seeds.y) ^ randomizeId(gi+li));
-	s->c = (uint2)((seeds.z) ^ randomizeId(gi+li), (seeds.w) ^ randomizeId(gi&li));
+	const int i = get_global_id(1) * get_global_size(0) + get_global_id(0);
+	s->x = (uint2)((seeds.x) ^ randomizeId(i), (seeds.y) ^ randomizeId(i));
+	s->c = (uint2)((seeds.z) ^ randomizeId(i), (seeds.w) ^ randomizeId(i));
 }
 
 kernel void imginit_buf(global uchar4 * img)
@@ -139,19 +137,21 @@ kernel void pathTracer(global uchar4 * img, global int * G, float4 cam_forward, 
 	float4 color = (float4)(13, 13, 13, 0);
 	int i = get_global_id(0);
 	int j = get_global_id(1);
+	int width = get_global_size(0);
+	int height = get_global_size(1);
 	mwc64xvec2_state_t rng;
 	MWC64XVEC2_Seeding(&rng, seeds);
-	float2 randValues1 = MWC64XVEC2(&rng, 0.0f, 1.0f);
-	float2 randValues2 = MWC64XVEC2(&rng, 0.0f, 1.0f);
+	float4 randValues;
 	float4 origin, direction, delta;
 	for(int r = 64; r--;){
-		delta = cam_up * ((randValues1.x - 0.5f) * 99) + cam_right * ((randValues1.y - 0.5f) * 99);
+		randValues = (float4)(MWC64XVEC2(&rng, 0.0f, 1.0f), MWC64XVEC2(&rng, 0.0f, 1.0f));
+		delta = cam_up * ((randValues.x - 0.5f) * 99) + cam_right * ((randValues.y - 0.5f) * 99);
 		origin = (float4)(17, 16, 8, 0) + delta;
-		direction = NotOperator(delta * (-1) + (cam_up * (randValues2.x + i) + cam_right * (j + randValues2.y) + eye_offset) * 16);
+		direction = NotOperator(delta * (-1) + (cam_up * (randValues.z + i) + cam_right * (j + randValues.w) + eye_offset) * 16);
 		color = Sample(&origin, &direction, &rng, G) * 3.5f + color;
 	}
 	color.w = 255;
 	//printf("Color %d %d: %f, %f, %f, %f\n", i, j, color.x, color.y, color.z, color.w);
-	img[j*get_global_size(0)+i]=convert_uchar4(color);
+	img[width*height - (j*width+i)]=convert_uchar4(color);
 }
 

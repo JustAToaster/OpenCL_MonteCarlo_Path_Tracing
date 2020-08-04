@@ -124,7 +124,7 @@ int main(int argc, char* argv[]){
 	ocl_check(err, "create kernel spt_k");
 	
 	//seeds for the edited MWC64X
-	cl_uint4 seeds = {.x = time(0) & 134217727, .y = (getpid() * getpid()) & 134217727, .z = (clock()*clock()) & 134217727, .w = rdtsc() & 134217727};
+	cl_uint4 seeds = {.x = time(0) & 134217727, .y = (getpid() * getpid() * getpid()) & 134217727, .z = (clock()*clock()) & 134217727, .w = rdtsc() & 134217727};
 
 	printf("Seeds: %d, %d, %d, %d\n", seeds.x, seeds.y, seeds.z, seeds.w);
 
