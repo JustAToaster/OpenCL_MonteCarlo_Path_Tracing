@@ -1,0 +1,240 @@
+typedef struct{
+	float4 v0;
+	float4 v1;
+	float4 v2;
+} Triangle;
+
+//MWC64x, an RNG made by David B. Tomas, with custom seeding
+//Source: http://cas.ee.ic.ac.uk/people/dt10/research/rngs-gpu-mwc64x.html
+
+typedef struct{ uint2 x; uint2 c; } mwc64xvec2_state_t;
+
+inline float2 MWC64XVEC2(mwc64xvec2_state_t *s, float leftLimit, float rightLimit)
+{
+    enum{ MWC64XVEC2_A = 4294883355U };
+    uint2 x=s->x, c=s->c;
+    uint2 res=x^c;                     // Calculate the result
+    uint2 hi=mul_hi(x,MWC64XVEC2_A);              // Step the RNG
+    x=x*MWC64XVEC2_A+c;
+    c=hi+convert_uint2(x<c);
+    s->x=x;
+    s->c=c;             // Pack the state back up
+    return leftLimit + convert_float2(res)*((rightLimit - leftLimit)/4294967295);
+}
+
+//Another simple RNG (often used in hashing) to randomize local id or global id
+inline uint randomizeId(uint id)
+{
+        id = (id ^ 61) ^ (id >> 16);
+        id *= 9;
+        id = id ^ (id >> 4);
+        id *= 0x27d4eb2d;
+        id = id ^ (id >> 15);
+        return id;
+ }
+
+//Mix seeds with randomized id
+inline void MWC64XVEC2_Seeding(mwc64xvec2_state_t *s, uint4 seeds){
+	const int i = get_global_id(1) * get_global_size(0) + get_global_id(0);
+	s->x = (uint2)((seeds.x) ^ randomizeId(i), (seeds.y) ^ randomizeId(i));
+	s->c = (uint2)((seeds.z) ^ randomizeId(i), (seeds.w) ^ randomizeId(i));
+}
+
+kernel void imginit_buf(global uchar4 * img)
+{
+	const int j = get_global_id(1);
+	const int i = get_global_id(0);
+	const int size = get_global_size(0);
+
+	img[j*size+i] = (uchar4)(255, 255, 255, 255);
+}
+
+//Defined as operator! in the simple CPU tracer
+inline float4 Normalize(float4 x){
+	return ((1/sqrt(dot(x, x))) * x);
+}
+
+inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal, 
+	global int * Spheres, global int * Planes, global Triangle * Triangles, int ntriangles){
+
+	*t = 1e9;
+	int m = 0;
+	float dist;
+	float4 intersection;
+
+	//Triangle check vars
+	float4 edge0, edge1, edge2, triangleNormal, crossEdge;
+	float rayPlaneDot, rayParamT;
+
+	//Check for floor intersection
+	dist = -origin.z / direction.z;
+	if(.01f < dist){
+		*t = dist;
+		*normal = (float4)(0, 0, 1, 0);
+		m = 1;
+	}
+	
+	//Check for plane intersection
+	for(int k = 19; k--;){
+		for(int j = 9; j--;){
+			if(Planes[j] & 1 << k){
+				dist = (4+j-origin.z)/direction.z;
+				intersection = origin + direction * dist;
+				if(dist < *t && (fabs(k-intersection.x)<1) && fabs(intersection.y)<1){
+				//if(dist < *t && distance(intersection, (float4)(k, 0, j+4, 0))<2){	//Circle intersection with euclidean distance
+					*t = dist;
+					*normal = (float4)(0, 0, 1, 0);
+					m = 3;
+				}
+			}
+		}
+	}
+	//Check for sphere intersection
+	for(int k = 19; k--;){
+		for(int j = 9; j--;){
+			if (Spheres[j] & 1 << k){
+				float4 p = origin + (float4)(-k, 0, -j - 4, 0);
+				float b = dot(p, direction);
+				float c = dot(p, p) - 1;
+				float q = b * b - c;
+
+				//Does the ray hit the sphere?
+				if(q > 0){
+					float s = -b - sqrt(q);
+					//It does, compute the distance camera-sphere
+					if(s < (*t) && s > 0.01f){
+						*t = s;
+						*normal = Normalize(p + direction * (*t));
+						m = 2;
+					}
+				}
+			}
+		}
+	}
+
+	//Check for intersection with triangles
+	for(int i=0; i<ntriangles; i++){
+		edge0 = Triangles[i].v1 - Triangles[i].v0;
+		edge1 = Triangles[i].v2 - Triangles[i].v1;
+		edge2 = Triangles[i].v2 - Triangles[i].v0;
+		triangleNormal = Normalize(cross(edge0, edge2));
+
+		//check if ray and plane are parallel
+		rayPlaneDot = dot(triangleNormal, direction);
+		if(fabs(rayPlaneDot) < 0.02f){
+			continue;	//they do not intersect, check next triangle
+		}
+		//Find distance from the origin to the plane that contains the triangle
+		dist = dot(triangleNormal, Triangles[i].v0);
+		//Compute t from ray parametric equation
+		rayParamT = (dot(triangleNormal, origin) + dist)/rayPlaneDot;
+		if (rayParamT < 0){
+			continue;	//ray is behind the triangle, check next triangle
+		}
+		intersection = origin + rayParamT * direction;
+
+		//Inside-outside test
+		//Edge 0
+		crossEdge = cross(edge0, intersection - Triangles[i].v0);
+		if(dot(triangleNormal, crossEdge) < 0){
+			continue;	//The intersection point is on the right side, check next triangle
+		}
+		//Edge 1
+		crossEdge = cross(edge1, intersection - Triangles[i].v1);
+		if(dot(triangleNormal, crossEdge) < 0){
+			continue;	//The intersection point is on the right side, check next triangle
+		}
+		//Edge 2
+		edge2 *= -1;
+		crossEdge = cross(edge2, intersection - Triangles[i].v2);
+		if(dot(triangleNormal, crossEdge) < 0){
+			continue;	//The intersection point is on the right side, check next triangle
+		}
+		//Ray hits the triangle
+		*t = dist;
+		*normal = triangleNormal;
+		m = 3;
+	}
+
+	return m;
+}
+
+inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * rng, 
+	global int * Spheres, global int * Planes, global Triangle * Triangles, int ntriangles){
+	//Recursion vars
+	float4 colorFact = (float4)(0, 0, 0, 0);
+	int divFact = 1;
+
+	float2 randValues;
+	float4 intersection, half_vec;
+	float t;
+	float4 normal, light_dir;
+	float lamb_f, color;
+	int material;
+	for(int maxIter = 5; maxIter--;){
+		randValues = MWC64XVEC2(rng, 0.0f, 1.0f);
+		material = TraceRay(*origin, *direction, &t, &normal, Spheres, Planes, Triangles, ntriangles);
+		if (!material){
+			//Nothing found and the ray goes upward: Generate a sky color
+			return colorFact + (float4)(0.7f, 0.6f, 1.0f, 0) * pow(1 - (*direction).z, 4) / divFact;
+		}
+
+		//Something was hit
+		intersection = (*origin) + (*direction) * t;
+		light_dir = Normalize((float4)(9 + randValues.x, 9 + randValues.y, 16, 0) + intersection * (-1));
+
+		//Calculate the lambertian factor
+		lamb_f = dot(light_dir, normal);
+
+		//Calculate illumination factor (lambertian coefficient > 0 or in shadow)?
+		if(lamb_f < 0 || TraceRay(intersection, light_dir, &t, &normal, Spheres, Planes, Triangles, ntriangles)){
+			lamb_f = 0;
+		}
+
+		if(material == 1){
+			//Nothing was hit and the ray was going downward: Generate floor checkerboard texture
+			intersection = intersection * 0.2f;
+			return colorFact+((int)(ceil(intersection.x) + ceil(intersection.y)) & 1 ? (float4)(3, 1, 1, 0) : (float4)(3, 3, 3, 0)) * (lamb_f * 0.2f + 0.1f) / divFact;
+		}
+		if(material == 3){	//diffuse shader
+			float4 diffuseColor = (float4)(2, 3, 2, 0);
+			return colorFact + (diffuseColor * (lamb_f * 0.2f + 0.1f)) / divFact;
+		}
+		//m == 2 A reflective surface was hit. Cast a ray bouncing from it.
+		//Attenuate color by 50% since it is bouncing (* 0.5)
+		//Unrolled recursion with an infinite loop and by updating those factors
+		else{
+			half_vec = (*direction) + normal * (dot(normal, *direction) * (-2));
+			color = pow(dot(light_dir, half_vec) * (lamb_f > 0), 99);
+			colorFact += (float4)(color, color, color, 0) * divFact;
+			*origin = intersection;
+			*direction = half_vec;
+			divFact *= 2;
+		}
+	}
+}
+
+kernel void pathTracer(global uchar4 * img, global int * Spheres, global int * Planes, 
+	global Triangle * Triangles, int ntriangles,
+	float4 cam_forward, float4 cam_up, float4 cam_right, float4 eye_offset, uint4 seeds){
+	float4 color = (float4)(13, 13, 13, 0);
+	int i = get_global_id(0);
+	int j = get_global_id(1);
+	int width = get_global_size(0);
+	int height = get_global_size(1);
+	mwc64xvec2_state_t rng;
+	MWC64XVEC2_Seeding(&rng, seeds);
+	float4 randValues;
+	float4 origin, direction, delta;
+	for(int r = 64; r--;){
+		randValues = (float4)(MWC64XVEC2(&rng, 0.0f, 1.0f), MWC64XVEC2(&rng, 0.0f, 1.0f));
+		delta = cam_up * ((randValues.x - 0.5f) * 99) + cam_right * ((randValues.y - 0.5f) * 99);
+		origin = (float4)(17, 16, 8, 0) + delta;
+		direction = Normalize(delta * (-1) + (cam_up * (randValues.z + i) + cam_right * (j + randValues.w) + eye_offset) * 16);
+		color = Sample(&origin, &direction, &rng, Spheres, Planes, Triangles, ntriangles) * 3.5f + color;
+	}
+	color.w = 255;
+	//printf("Color %d %d: %f, %f, %f, %f\n", i, j, color.x, color.y, color.z, color.w);
+	img[width*height - (j*width+i)]=convert_uchar4(color);
+}
+

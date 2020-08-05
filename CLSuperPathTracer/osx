@@ -1,0 +1,5 @@
+LDLIBS=-framework OpenCL
+
+TARGETS = CLSuperPathTracer
+
+all: $(TARGETS)
