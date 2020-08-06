@@ -57,19 +57,20 @@ inline float4 Normalize(float4 x){
 inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal, 
 	global int * Spheres, global int * Planes, global Triangle * Triangles, int ntriangles){
 
-	*t = 1e9;
-	int m = 0;
-	float dist;
+	*t = 1e9;	//default distance
+	int m = 0;	//default material
+	float rayDist;
 	float4 intersection;
 
 	//Triangle check vars
+	Triangle curr_triangle;
 	float4 edge0, edge1, edge2, triangleNormal, crossEdge;
-	float rayPlaneDot, rayParamT;
+	float rayPlaneDot, planeDist;
 
 	//Check for floor intersection
-	dist = -origin.z / direction.z;
-	if(.01f < dist){
-		*t = dist;
+	rayDist = -origin.z / direction.z;
+	if(.01f < rayDist){
+		*t = rayDist;
 		*normal = (float4)(0, 0, 1, 0);
 		m = 1;
 	}
@@ -78,11 +79,11 @@ inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal,
 	for(int k = 19; k--;){
 		for(int j = 9; j--;){
 			if(Planes[j] & 1 << k){
-				dist = (4+j-origin.z)/direction.z;
-				intersection = origin + direction * dist;
-				if(dist < *t && (fabs(k-intersection.x)<1) && fabs(intersection.y)<1){
+				rayDist = (4+j-origin.z)/direction.z;
+				intersection = origin + direction * rayDist;
+				if(rayDist < *t && (fabs(k-intersection.x)<1) && fabs(intersection.y)<1){
 				//if(dist < *t && distance(intersection, (float4)(k, 0, j+4, 0))<2){	//Circle intersection with euclidean distance
-					*t = dist;
+					*t = rayDist;
 					*normal = (float4)(0, 0, 1, 0);
 					m = 3;
 				}
@@ -100,10 +101,10 @@ inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal,
 
 				//Does the ray hit the sphere?
 				if(q > 0){
-					float s = -b - sqrt(q);
+					rayDist = -b - sqrt(q);
 					//It does, compute the distance camera-sphere
-					if(s < (*t) && s > 0.01f){
-						*t = s;
+					if(rayDist < (*t) && rayDist > 0.01f){
+						*t = rayDist;
 						*normal = Normalize(p + direction * (*t));
 						m = 2;
 					}
@@ -112,48 +113,51 @@ inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal,
 		}
 	}
 
-	//Check for intersection with triangles
+	//Check for triangle intersection
 	for(int i=0; i<ntriangles; i++){
-		edge0 = Triangles[i].v1 - Triangles[i].v0;
-		edge1 = Triangles[i].v2 - Triangles[i].v1;
-		edge2 = Triangles[i].v2 - Triangles[i].v0;
+		curr_triangle = Triangles[i];
+		edge0 = curr_triangle.v1 - curr_triangle.v0;
+		edge1 = curr_triangle.v2 - curr_triangle.v1;
+		edge2 = curr_triangle.v2 - curr_triangle.v0;
 		triangleNormal = Normalize(cross(edge0, edge2));
 
 		//check if ray and plane are parallel
 		rayPlaneDot = dot(triangleNormal, direction);
-		if(fabs(rayPlaneDot) < 0.02f){
-			continue;	//they do not intersect, check next triangle
+		if(fabs(rayPlaneDot) < 0.01f){
+			continue;	//they almost certainly do not intersect, check next triangle
 		}
 		//Find distance from the origin to the plane that contains the triangle
-		dist = dot(triangleNormal, Triangles[i].v0);
-		//Compute t from ray parametric equation
-		rayParamT = (dot(triangleNormal, origin) + dist)/rayPlaneDot;
-		if (rayParamT < 0){
+		planeDist = dot(triangleNormal, curr_triangle.v0);
+		//Compute t from ray parametric equation, the distance between ray and plane
+		rayDist = (dot(triangleNormal, origin) + planeDist)/rayPlaneDot;
+		if (rayDist < 0){
 			continue;	//ray is behind the triangle, check next triangle
 		}
-		intersection = origin + rayParamT * direction;
+		intersection = origin + rayDist * direction;
 
 		//Inside-outside test
 		//Edge 0
-		crossEdge = cross(edge0, intersection - Triangles[i].v0);
+		crossEdge = cross(edge0, intersection - curr_triangle.v0);
 		if(dot(triangleNormal, crossEdge) < 0){
 			continue;	//The intersection point is on the right side, check next triangle
 		}
 		//Edge 1
-		crossEdge = cross(edge1, intersection - Triangles[i].v1);
+		crossEdge = cross(edge1, intersection - curr_triangle.v1);
 		if(dot(triangleNormal, crossEdge) < 0){
 			continue;	//The intersection point is on the right side, check next triangle
 		}
 		//Edge 2
-		edge2 *= -1;
-		crossEdge = cross(edge2, intersection - Triangles[i].v2);
+		edge2 *= -1;	//the vector used to compute the normal points the other way
+		crossEdge = cross(edge2, intersection - curr_triangle.v2);
 		if(dot(triangleNormal, crossEdge) < 0){
 			continue;	//The intersection point is on the right side, check next triangle
 		}
 		//Ray hits the triangle
-		*t = dist;
-		*normal = triangleNormal;
-		m = 3;
+		if(rayDist < *t){
+			*t = rayDist;
+			*normal = triangleNormal;
+			m = 3;
+		}
 	}
 
 	return m;

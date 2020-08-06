@@ -44,7 +44,7 @@ cl_float4 CrossProduct(cl_float4 x, cl_float4 y){
 }
 
 //Defined as operator! in the simple CPU tracer
-cl_float4 NotOperator(cl_float4 x){
+cl_float4 Normalize(cl_float4 x){
 	return ScalarTimesVector((1/sqrt(ScalarProduct(x, x))), x);
 }
 
@@ -236,10 +236,10 @@ int main(int argc, char* argv[]){
 
 	cl_float4 zVect = { .x = 0, .y = 0, .z = 1, .w = 0 };
 
-	cl_float4 cam_forward = { .x = -6, .y = -16, .z = 0, .w = 0 };
-	cam_forward = NotOperator(cam_forward);
-	cl_float4 cam_up = ScalarTimesVector(0.002, NotOperator(CrossProduct(zVect, cam_forward)));
-	cl_float4 cam_right = ScalarTimesVector(0.002, NotOperator(CrossProduct(cam_forward, cam_up)));
+	cl_float4 cam_forward = { .x = 6, .y = -16, .z = 0, .w = 0 };
+	cam_forward = Normalize(cam_forward);
+	cl_float4 cam_up = ScalarTimesVector(0.002, Normalize(CrossProduct(zVect, cam_forward)));
+	cl_float4 cam_right = ScalarTimesVector(0.002, Normalize(CrossProduct(cam_forward, cam_up)));
 
 	cl_float4 eye_offset = VectorSum(ScalarTimesVector((float)(-256), VectorSum(cam_up, cam_right)), cam_forward);
 
