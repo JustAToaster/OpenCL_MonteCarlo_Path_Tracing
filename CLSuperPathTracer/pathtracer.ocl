@@ -64,8 +64,14 @@ inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal,
 
 	//Triangle check vars
 	Triangle curr_triangle;
-	float4 edge0, edge1, edge2, triangleNormal, crossEdge;
+	float4 edge0, edge1, edge2; 
+	/*Geometric solution
+	float triangleNormal, crossEdge;
 	float rayPlaneDot, planeDist;
+	*/
+	//Moller-Trumbore solution
+	float4 pvec, qvec, tvec;
+	float det, invDet, barycentric_u, barycentric_q, barycentric_v;
 
 	//Check for floor intersection
 	rayDist = -origin.z / direction.z;
@@ -112,14 +118,14 @@ inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal,
 			}
 		}
 	}
-
-	//Check for triangle intersection
+	/*
+	//Check for triangle intersection (geometric solution, not great)
 	for(int i=0; i<ntriangles; i++){
 		curr_triangle = Triangles[i];
 		edge0 = curr_triangle.v1 - curr_triangle.v0;
 		edge1 = curr_triangle.v2 - curr_triangle.v1;
 		edge2 = curr_triangle.v2 - curr_triangle.v0;
-		triangleNormal = Normalize(cross(edge0, edge2));
+		triangleNormal = cross(edge0, edge2);
 
 		//check if ray and plane are parallel
 		rayPlaneDot = dot(triangleNormal, direction);
@@ -129,7 +135,7 @@ inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal,
 		//Find distance from the origin to the plane that contains the triangle
 		planeDist = dot(triangleNormal, curr_triangle.v0);
 		//Compute t from ray parametric equation, the distance between ray and plane
-		rayDist = (dot(triangleNormal, origin) + planeDist)/rayPlaneDot;
+		rayDist = (dot(triangleNormal, origin) + planeDist)/-rayPlaneDot;
 		if (rayDist < 0){
 			continue;	//ray is behind the triangle, check next triangle
 		}
@@ -155,11 +161,40 @@ inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal,
 		//Ray hits the triangle
 		if(rayDist < *t){
 			*t = rayDist;
-			*normal = triangleNormal;
+			*normal = Normalize(intersection);
 			m = 3;
 		}
 	}
+	*/
+	
+	//Check for triangle intersection (Moller-Trumbore)
+	for(int i=0; i<ntriangles; i++){
+		curr_triangle = Triangles[i];
+		edge0 = curr_triangle.v1 - curr_triangle.v0;
+		edge2 = curr_triangle.v2 - curr_triangle.v0;
 
+		pvec = cross(direction, edge2);
+		det = dot(edge0, pvec);
+		if(fabs(det) < 0.01f){
+			continue;
+		}
+		invDet = 1/det;
+		tvec = origin - curr_triangle.v0;
+		barycentric_u = dot(tvec, pvec) * invDet;
+		if(barycentric_u < 0 || barycentric_u > 1) continue;
+		qvec = cross(tvec, edge0);
+		barycentric_v = dot(direction, qvec) * invDet;
+		if (barycentric_v < 0 || barycentric_u+barycentric_v > 1) continue;
+		rayDist = dot(edge2, qvec) * invDet;
+
+		//Ray hits the triangle
+		if(rayDist < *t){
+			*t = rayDist;
+			*normal = Normalize(cross(edge0, edge2));
+			m = 4;
+		}
+	}
+	
 	return m;
 }
 
@@ -203,6 +238,9 @@ inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * r
 		if(material == 3){	//diffuse shader
 			float4 diffuseColor = (float4)(2, 3, 2, 0);
 			return colorFact + (diffuseColor * (lamb_f * 0.2f + 0.1f)) / divFact;
+		}
+		if(material == 4){	//facing ratio
+			return colorFact + max(0.0f, dot(normal, -(*direction)))/ divFact;
 		}
 		//m == 2 A reflective surface was hit. Cast a ray bouncing from it.
 		//Attenuate color by 50% since it is bouncing (* 0.5)

@@ -88,7 +88,7 @@ int parseTrianglesFromFile(char * fileName, cl_Triangle * arr){
 		arr[curr_triangle].v0.y = atof(y);
 		arr[curr_triangle].v0.z = atof(z);
 		arr[curr_triangle].v0.w = 0.0f;
-		//printf("V0 %f %f %f\n", arr[curr_triangle].v0.x, arr[curr_triangle].v0.y, arr[curr_triangle].v0.z);
+		printf("V0 %f %f %f\n", arr[curr_triangle].v0.x, arr[curr_triangle].v0.y, arr[curr_triangle].v0.z);
 
 		fgets(x, MAX, textFile);	//read END_VERTEX and ignore
 
@@ -99,7 +99,7 @@ int parseTrianglesFromFile(char * fileName, cl_Triangle * arr){
 		arr[curr_triangle].v1.y = atof(y);
 		arr[curr_triangle].v1.z = atof(z);
 		arr[curr_triangle].v1.w = 0.0f;
-		//printf("V1 %f %f %f\n", arr[curr_triangle].v1.x, arr[curr_triangle].v1.y, arr[curr_triangle].v1.z);
+		printf("V1 %f %f %f\n", arr[curr_triangle].v1.x, arr[curr_triangle].v1.y, arr[curr_triangle].v1.z);
 
 		fgets(x, MAX, textFile);	//read END_VERTEX and ignore
 
@@ -110,7 +110,7 @@ int parseTrianglesFromFile(char * fileName, cl_Triangle * arr){
 		arr[curr_triangle].v2.y = atof(y);
 		arr[curr_triangle].v2.z = atof(z);
 		arr[curr_triangle].v2.w = 0.0f;
-		//printf("V2 %f %f %f\n", arr[curr_triangle].v2.x, arr[curr_triangle].v2.y, arr[curr_triangle].v2.z);
+		printf("V2 %f %f %f\n", arr[curr_triangle].v2.x, arr[curr_triangle].v2.y, arr[curr_triangle].v2.z);
 
 		fgets(x, MAX, textFile);	//read END_VERTEX and ignore
 		fgets(x, MAX, textFile);	//read END_TRIANGLE and ignore
@@ -236,7 +236,7 @@ int main(int argc, char* argv[]){
 
 	cl_float4 zVect = { .x = 0, .y = 0, .z = 1, .w = 0 };
 
-	cl_float4 cam_forward = { .x = 6, .y = -16, .z = 0, .w = 0 };
+	cl_float4 cam_forward = { .x = -6, .y = -16, .z = 0, .w = 0 };
 	cam_forward = Normalize(cam_forward);
 	cl_float4 cam_up = ScalarTimesVector(0.002, Normalize(CrossProduct(zVect, cam_forward)));
 	cl_float4 cam_right = ScalarTimesVector(0.002, Normalize(CrossProduct(cam_forward, cam_up)));
