@@ -7,19 +7,19 @@ typedef struct{
 //MWC64x, an RNG made by David B. Tomas, with custom seeding
 //Source: http://cas.ee.ic.ac.uk/people/dt10/research/rngs-gpu-mwc64x.html
 
-typedef struct{ uint2 x; uint2 c; } mwc64xvec2_state_t;
+typedef struct{ uint4 x; uint4 c; } mwc64xvec4_state_t;
 
-inline float2 MWC64XVEC2(mwc64xvec2_state_t *s, float leftLimit, float rightLimit)
+inline float4 MWC64XVEC4(mwc64xvec4_state_t *s, float leftLimit, float rightLimit)
 {
-    enum{ MWC64XVEC2_A = 4294883355U };
-    uint2 x=s->x, c=s->c;
-    uint2 res=x^c;                     // Calculate the result
-    uint2 hi=mul_hi(x,MWC64XVEC2_A);              // Step the RNG
-    x=x*MWC64XVEC2_A+c;
-    c=hi+convert_uint2(x<c);
+    enum{ MWC64XVEC4_A = 4294883355U };
+    uint4 x=s->x, c=s->c;
+    uint4 res=x^c;                     // Calculate the result
+    uint4 hi=mul_hi(x,MWC64XVEC4_A);              // Step the RNG
+    x=x*MWC64XVEC4_A+c;
+    c=hi+convert_uint4(x<c);
     s->x=x;
     s->c=c;             // Pack the state back up
-    return leftLimit + convert_float2(res)*((rightLimit - leftLimit)/4294967295);
+    return leftLimit + convert_float4(res)*((rightLimit - leftLimit)/4294967295);
 }
 
 //Another simple RNG (often used in hashing) to randomize local id or global id
@@ -33,11 +33,11 @@ inline uint randomizeId(uint id)
         return id;
  }
 
-//Mix seeds with randomized id
-inline void MWC64XVEC2_Seeding(mwc64xvec2_state_t *s, uint4 seeds){
+//Mix seeds with randomized global id and local id
+inline void MWC64XVEC4_Seeding(mwc64xvec4_state_t *s, uint4 seeds){
 	const int i = get_global_id(1) * get_global_size(0) + get_global_id(0);
-	s->x = (uint2)((seeds.x) ^ randomizeId(i), (seeds.y) ^ randomizeId(i));
-	s->c = (uint2)((seeds.z) ^ randomizeId(i), (seeds.w) ^ randomizeId(i));
+	s->x = (uint4)((seeds.x) ^ randomizeId(i), (seeds.y ^ seeds.z) ^ randomizeId(i), (seeds.y ^ seeds.w) ^ randomizeId(i), (seeds.x ^ seeds.y) ^ randomizeId(i));
+	s->c = (uint4)((seeds.w) ^ randomizeId(i), (seeds.w ^ seeds.x) ^ randomizeId(i), (seeds.z ^ seeds.x) ^ randomizeId(i), (seeds.z ^ seeds.w) ^ randomizeId(i));
 }
 
 kernel void imginit_buf(global uchar4 * img)
@@ -64,14 +64,15 @@ inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal,
 
 	//Triangle check vars
 	Triangle curr_triangle;
-	float4 edge0, edge1, edge2; 
+	float4 edge0, edge2; 
 	/*Geometric solution
 	float triangleNormal, crossEdge;
 	float rayPlaneDot, planeDist;
+	float4 edge1;
 	*/
 	//Moller-Trumbore solution
 	float4 pvec, qvec, tvec;
-	float det, invDet, barycentric_u, barycentric_q, barycentric_v;
+	float det, invDet, barycentric_u, barycentric_v;
 
 	//Check for floor intersection
 	rayDist = -origin.z / direction.z;
@@ -112,7 +113,7 @@ inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal,
 					if(rayDist < (*t) && rayDist > 0.01f){
 						*t = rayDist;
 						*normal = Normalize(p + direction * (*t));
-						m = 2;
+						m = 3;
 					}
 				}
 			}
@@ -198,20 +199,23 @@ inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal,
 	return m;
 }
 
-inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * rng, 
-	global int * Spheres, global int * Planes, global Triangle * Triangles, int ntriangles){
+inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec4_state_t * rng, 
+	global int * Spheres, global int * Planes, global Triangle * Triangles, int ntriangles,
+	global float4 * scenelights, int nlights){
 	//Recursion vars
 	float4 colorFact = (float4)(0, 0, 0, 0);
 	int divFact = 1;
 
-	float2 randValues;
+	float4 randValues;
 	float4 intersection, half_vec;
-	float t;
-	float4 normal, light_dir;
-	float lamb_f, color;
+	float t, shadow_t;
+
+	float4 normal, shadow_normal, light_dir, light_pos;
+	float distanceFromLight, light_intensity;
+	float lamb_f, color, total_illumination = 0.0f;
+
 	int material;
 	for(int maxIter = 5; maxIter--;){
-		randValues = MWC64XVEC2(rng, 0.0f, 1.0f);
 		material = TraceRay(*origin, *direction, &t, &normal, Spheres, Planes, Triangles, ntriangles);
 		if (!material){
 			//Nothing found and the ray goes upward: Generate a sky color
@@ -220,24 +224,41 @@ inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * r
 
 		//Something was hit
 		intersection = (*origin) + (*direction) * t;
-		light_dir = Normalize((float4)(9 + randValues.x, 9 + randValues.y, 16, 0) + intersection * (-1));
 
-		//Calculate the lambertian factor
-		lamb_f = dot(light_dir, normal);
+		//Compute total illumination factor by checking all point lights
+		for(int i=0; i<nlights; ++i){
+			randValues = MWC64XVEC4(rng, 0.0f, 1.0f);
+			light_pos = scenelights[i];
+			light_intensity = light_pos.w;
+			light_pos.w = 0;
+			light_dir = Normalize(light_pos + randValues + intersection * (-1));
 
-		//Calculate illumination factor (lambertian coefficient > 0 or in shadow)?
-		if(lamb_f < 0 || TraceRay(intersection, light_dir, &t, &normal, Spheres, Planes, Triangles, ntriangles)){
-			lamb_f = 0;
+			//Calculate the lambertian factor
+			lamb_f = dot(light_dir, normal);
+
+			//Calculate illumination factor (lambertian coefficient > 0 or in shadow)?
+			if(lamb_f < 0 || TraceRay(intersection, light_dir, &shadow_t, &shadow_normal, Spheres, Planes, Triangles, ntriangles)){
+				lamb_f = 0;
+			}
+			else{
+				//Objects away from the light should have less illumination (Inverse square law)
+				distanceFromLight = distance(light_pos, intersection);
+				total_illumination += lamb_f * min(light_intensity/(distanceFromLight*distanceFromLight), 1.0f);
+			}
 		}
+
+		if(total_illumination > 1.0f) total_illumination = 1.0f;
+		total_illumination /= 4;
+		//printf("avg_ill: %f\n", total_illumination);
 
 		if(material == 1){
 			//Nothing was hit and the ray was going downward: Generate floor checkerboard texture
 			intersection = intersection * 0.2f;
-			return colorFact+((int)(ceil(intersection.x) + ceil(intersection.y)) & 1 ? (float4)(3, 1, 1, 0) : (float4)(3, 3, 3, 0)) * (lamb_f * 0.2f + 0.1f) / divFact;
+			return colorFact+((int)(ceil(intersection.x) + ceil(intersection.y)) & 1 ? (float4)(3, 1, 1, 0) : (float4)(3, 3, 3, 0)) * (total_illumination) / divFact;
 		}
 		if(material == 3){	//diffuse shader
 			float4 diffuseColor = (float4)(2, 3, 2, 0);
-			return colorFact + (diffuseColor * (lamb_f * 0.2f + 0.1f)) / divFact;
+			return colorFact + (diffuseColor * (total_illumination)) / divFact;
 		}
 		if(material == 4){	//facing ratio
 			return colorFact + max(0.0f, dot(normal, -(*direction)))/ divFact;
@@ -247,7 +268,7 @@ inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * r
 		//Unrolled recursion with an infinite loop and by updating those factors
 		else{
 			half_vec = (*direction) + normal * (dot(normal, *direction) * (-2));
-			color = pow(dot(light_dir, half_vec) * (lamb_f > 0), 99);
+			color = pow(dot(light_dir, half_vec) * (total_illumination > 0), 99);
 			colorFact += (float4)(color, color, color, 0) * divFact;
 			*origin = intersection;
 			*direction = half_vec;
@@ -257,23 +278,24 @@ inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * r
 }
 
 kernel void pathTracer(global uchar4 * img, global int * Spheres, global int * Planes, 
-	global Triangle * Triangles, int ntriangles,
+	global Triangle * Triangles, int ntriangles, global float4 * scenelights, int nlights,
 	float4 cam_forward, float4 cam_up, float4 cam_right, float4 eye_offset, uint4 seeds){
 	float4 color = (float4)(13, 13, 13, 0);
 	int i = get_global_id(0);
 	int j = get_global_id(1);
 	int width = get_global_size(0);
 	int height = get_global_size(1);
-	mwc64xvec2_state_t rng;
-	MWC64XVEC2_Seeding(&rng, seeds);
+	mwc64xvec4_state_t rng;
+	MWC64XVEC4_Seeding(&rng, seeds);
 	float4 randValues;
 	float4 origin, direction, delta;
+
 	for(int r = 64; r--;){
-		randValues = (float4)(MWC64XVEC2(&rng, 0.0f, 1.0f), MWC64XVEC2(&rng, 0.0f, 1.0f));
+		randValues = MWC64XVEC4(&rng, 0.0f, 1.0f);
 		delta = cam_up * ((randValues.x - 0.5f) * 99) + cam_right * ((randValues.y - 0.5f) * 99);
 		origin = (float4)(17, 16, 8, 0) + delta;
 		direction = Normalize(delta * (-1) + (cam_up * (randValues.z + i) + cam_right * (j + randValues.w) + eye_offset) * 16);
-		color = Sample(&origin, &direction, &rng, Spheres, Planes, Triangles, ntriangles) * 3.5f + color;
+		color = Sample(&origin, &direction, &rng, Spheres, Planes, Triangles, ntriangles, scenelights, nlights) * 3.5f + color;
 	}
 	color.w = 255;
 	//printf("Color %d %d: %f, %f, %f, %f\n", i, j, color.x, color.y, color.z, color.w);

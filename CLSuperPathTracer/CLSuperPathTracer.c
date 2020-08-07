@@ -11,7 +11,8 @@
 
 #define CL_TARGET_OPENCL_VERSION 120
 #define MAX 256
-#define MAX_TRIANGLES 64
+#define MAX_TRIANGLES 512
+#define MAX_LIGHTS 5
 
 #include "../ocl_boiler.h"
 #include "../pamalign.h"
@@ -77,7 +78,6 @@ int parseArrayFromFile(char * fileName, cl_int * arr){
 int parseTrianglesFromFile(char * fileName, cl_Triangle * arr){
 	FILE * textFile;
 	char x[MAX], y[MAX], z[MAX];
-	int linectr = 0;
 	int curr_triangle = 0;
 	textFile = fopen(fileName, "r");
 	while(!feof(textFile) && curr_triangle < MAX_TRIANGLES){
@@ -88,7 +88,7 @@ int parseTrianglesFromFile(char * fileName, cl_Triangle * arr){
 		arr[curr_triangle].v0.y = atof(y);
 		arr[curr_triangle].v0.z = atof(z);
 		arr[curr_triangle].v0.w = 0.0f;
-		printf("V0 %f %f %f\n", arr[curr_triangle].v0.x, arr[curr_triangle].v0.y, arr[curr_triangle].v0.z);
+		//printf("V0 %f %f %f\n", arr[curr_triangle].v0.x, arr[curr_triangle].v0.y, arr[curr_triangle].v0.z);
 
 		fgets(x, MAX, textFile);	//read END_VERTEX and ignore
 
@@ -99,7 +99,7 @@ int parseTrianglesFromFile(char * fileName, cl_Triangle * arr){
 		arr[curr_triangle].v1.y = atof(y);
 		arr[curr_triangle].v1.z = atof(z);
 		arr[curr_triangle].v1.w = 0.0f;
-		printf("V1 %f %f %f\n", arr[curr_triangle].v1.x, arr[curr_triangle].v1.y, arr[curr_triangle].v1.z);
+		//printf("V1 %f %f %f\n", arr[curr_triangle].v1.x, arr[curr_triangle].v1.y, arr[curr_triangle].v1.z);
 
 		fgets(x, MAX, textFile);	//read END_VERTEX and ignore
 
@@ -110,7 +110,7 @@ int parseTrianglesFromFile(char * fileName, cl_Triangle * arr){
 		arr[curr_triangle].v2.y = atof(y);
 		arr[curr_triangle].v2.z = atof(z);
 		arr[curr_triangle].v2.w = 0.0f;
-		printf("V2 %f %f %f\n", arr[curr_triangle].v2.x, arr[curr_triangle].v2.y, arr[curr_triangle].v2.z);
+		//printf("V2 %f %f %f\n", arr[curr_triangle].v2.x, arr[curr_triangle].v2.y, arr[curr_triangle].v2.z);
 
 		fgets(x, MAX, textFile);	//read END_VERTEX and ignore
 		fgets(x, MAX, textFile);	//read END_TRIANGLE and ignore
@@ -119,6 +119,28 @@ int parseTrianglesFromFile(char * fileName, cl_Triangle * arr){
 	}
 	fclose(textFile);
 	return curr_triangle;
+}
+
+//Method to retrieve point lights from lights.txt
+int parseLightsFromFile(char * fileName, cl_float4 * arr){
+	FILE * textFile;
+	char x[MAX], y[MAX], z[MAX], w[MAX];
+	int curr_light = 0;
+	textFile = fopen(fileName, "r");
+	while(!feof(textFile) && curr_light < MAX_LIGHTS){
+		fgets(x, MAX, textFile);
+		fgets(y, MAX, textFile);
+		fgets(z, MAX, textFile);
+		fgets(w, MAX, textFile);
+		arr[curr_light].x = atof(x);
+		arr[curr_light].y = atof(y);
+		arr[curr_light].z = atof(z);
+		arr[curr_light].w = atof(w);
+		printf("Light %d: %f %f %f %f\n", curr_light, arr[curr_light].x, arr[curr_light].y, arr[curr_light].z, arr[curr_light].w);
+		curr_light++;
+	}
+	fclose(textFile);
+	return curr_light;
 }
 
 cl_event imginit(cl_kernel imginit_k, cl_command_queue que, cl_mem d_render, int plotWidth, int plotHeight){
@@ -141,7 +163,8 @@ cl_event imginit(cl_kernel imginit_k, cl_command_queue que, cl_mem d_render, int
 
 //Setting up the kernel to render the image
 cl_event pathTracer(cl_kernel pathtracer_k, cl_command_queue que, cl_mem d_render, 
-	cl_mem d_Spheres, cl_mem d_Planes, cl_mem d_Triangles, cl_int ntriangles,
+	cl_mem d_Spheres, cl_mem d_Planes, cl_mem d_Triangles, cl_int ntriangles, 
+	cl_mem d_scenelights, cl_int nlights,
 	cl_uint4 seeds, cl_float4 cam_forward, cl_float4 cam_up, cl_float4 cam_right, 
 	cl_float4 eye_offset, cl_int renderWidth, cl_int renderHeight){
 
@@ -160,6 +183,10 @@ cl_event pathTracer(cl_kernel pathtracer_k, cl_command_queue que, cl_mem d_rende
 	err = clSetKernelArg(pathtracer_k, i++, sizeof(d_Triangles), &d_Triangles);
 	ocl_check(err, "set path tracer arg %d", i-1);
 	err = clSetKernelArg(pathtracer_k, i++, sizeof(ntriangles), &ntriangles);
+	ocl_check(err, "set path tracer arg %d", i-1);
+	err = clSetKernelArg(pathtracer_k, i++, sizeof(d_scenelights), &d_scenelights);
+	ocl_check(err, "set path tracer arg %d", i-1);
+	err = clSetKernelArg(pathtracer_k, i++, sizeof(nlights), &nlights);
 	ocl_check(err, "set path tracer arg %d", i-1);
 	err = clSetKernelArg(pathtracer_k, i++, sizeof(cam_forward), &cam_forward);
 	ocl_check(err, "set path tracer arg %d", i-1);
@@ -251,6 +278,9 @@ int main(int argc, char* argv[]){
 
 	printf("Cam values:\nCam_forward %f %f %f\nCam_up %f %f %f\nCam_right %f %f %f\n eye_offset %f %f %f\n", cam_forward.x, cam_forward.y, cam_forward.z, cam_up.x, cam_up.y, cam_up.z, cam_right.x, cam_right.y, cam_right.z, eye_offset.x, eye_offset.y, eye_offset.z);
 
+	//Point lights coordinates and intensity
+	cl_float4 * scenelights = malloc(sizeof(cl_float4)*MAX_LIGHTS);
+
 	//Geometries
 	cl_int * Spheres = malloc(sizeof(cl_int)*9);
 	cl_int * Planes = malloc(sizeof(cl_int)*9);
@@ -259,8 +289,10 @@ int main(int argc, char* argv[]){
 	parseArrayFromFile("spheres.txt", Spheres);
 	parseArrayFromFile("planes.txt", Planes);
 	cl_int ntriangles = parseTrianglesFromFile("triangles.txt", Triangles);
+	cl_int nlights = parseLightsFromFile("lights.txt", scenelights);
 
 	printf("Number of triangles: %d\n", ntriangles);
+	printf("Number of lights: %d\n", nlights);
 
 	cl_mem d_Spheres = clCreateBuffer(ctx,
 		CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
@@ -280,13 +312,20 @@ int main(int argc, char* argv[]){
 		&err);
 	ocl_check(err, "create buffer d_Triangles");
 
+	cl_mem d_scenelights = clCreateBuffer(ctx,
+		CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
+		sizeof(cl_float4)*nlights, scenelights,
+		&err);
+	ocl_check(err, "create buffer d_scenelights");
+
 	cl_event pathtracer_evt = pathTracer(pathtracer_k, que, d_render, 
-	d_Spheres, d_Planes, d_Triangles, ntriangles, seeds, 
+	d_Spheres, d_Planes, d_Triangles, ntriangles, 
+	d_scenelights, nlights, seeds, 
 	cam_forward, cam_up, cam_right, eye_offset, 
 	resultInfo.width, resultInfo.height);
 
 	cl_event getRender_evt;
-
+	
 	resultInfo.data = clEnqueueMapBuffer(que, d_render, CL_TRUE,
 		CL_MAP_READ,
 		0, resultInfo.data_size,
