@@ -151,7 +151,7 @@ inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * r
 	float4 colorFact = (float4)(0, 0, 0, 0);
 	int divFact = 1;
 
-	float4 randValues;
+	//float4 randValues;
 	float4 intersection, half_vec;
 	float t;
 
@@ -170,25 +170,27 @@ inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * r
 		//Something was hit
 		intersection = (*origin) + (*direction) * t;
 
-		//Compute total illumination factor by checking all point lights
+		//Compute total illumination factor by checking all virtual point lights
 		for(int i=0; i<nlights; ++i){
-			randValues = (float4)(MWC64XVEC2(rng, 0.0f, 1.0f), MWC64XVEC2(rng, 0.0f, 1.0f));
+			//randValues = (float4)(MWC64XVEC2(rng, 0.0f, 1.0f), MWC64XVEC2(rng, 0.0f, 1.0f));
 			light_pos = scenelights[i];
 			light_intensity = light_pos.w;
 			light_pos.w = 0;
-			light_dir = Normalize(light_pos + randValues + intersection * (-1));
+			distanceFromLight = distance(light_pos, intersection);
+			light_dir = (light_pos - intersection)/distanceFromLight;
 
 			//Calculate the lambertian factor
 			lamb_f = dot(light_dir, normal);
 
 			//Calculate illumination factor (lambertian coefficient > 0 or in shadow)?
 			//half_vec is just a dummy variable because we don't want the normal to be updated
-			if(lamb_f < 0 || TraceRay(intersection, light_dir, &t, &half_vec, Spheres, Planes, Triangles, ntriangles)){
+			//Shadows seem to break everything and make it painfully slow...?
+			//if(lamb_f < 0 || TraceRay(intersection, light_dir, &t, &half_vec, Spheres, Planes, Triangles, ntriangles)){
+			if(lamb_f < 0){
 				lamb_f = 0;
 			}
 			else{
 				//Objects away from the light should have less illumination (Inverse square law)
-				distanceFromLight = distance(light_pos, intersection);
 				total_illumination += lamb_f * min(light_intensity/(distanceFromLight*distanceFromLight), 1.0f);
 			}
 		}
@@ -258,10 +260,10 @@ inline float4 SampleFromLightSource(float4 origin, float4 direction,
 
 	if(material == 1){
 		//The ray was going downward: return a dim floor light
-		return (float4)(intersection.s012, 0.2f)*lamb_f;
+		return (float4)(intersection.s012, 2)*lamb_f;
 	}
 	if(material == 3){	//diffuse shader
-		return ((float4)(intersection.s012, 1) * lamb_f);
+		return ((float4)(intersection.s012, 5) * lamb_f);
 	}
 
 }

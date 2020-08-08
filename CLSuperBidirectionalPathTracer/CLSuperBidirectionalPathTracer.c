@@ -14,7 +14,7 @@
 #define MAX 256
 #define MAX_TRIANGLES 512
 #define MAX_LIGHTS 5
-#define N_VLP 64	//Virtual point lights per light source
+#define N_VLP 256	//Virtual point lights per light source
 
 #include "../ocl_boiler.h"
 #include "../pamalign.h"
@@ -349,9 +349,6 @@ int main(int argc, char* argv[]){
 	printf("Number of triangles: %d\n", ntriangles);
 	printf("Number of lights: %d\n", nlights);
 
-	//Virtual Light Points buffer which will be filled with samples by BPT first phase
-	cl_float4 * virtual_lights = malloc(sizeof(cl_float4)*N_VLP);
-
 	cl_mem d_Spheres = clCreateBuffer(ctx,
 		CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
 		sizeof(cl_int)*9, Spheres,
@@ -376,6 +373,7 @@ int main(int argc, char* argv[]){
 		&err);
 	ocl_check(err, "create buffer d_scenelights");
 
+	//Virtual Light Points buffer which will be filled with samples by BPT first phase
 	cl_mem d_virtual_lights = clCreateBuffer(ctx,
 		CL_MEM_READ_WRITE,
 		sizeof(cl_float4)*N_VLP*nlights, NULL,
