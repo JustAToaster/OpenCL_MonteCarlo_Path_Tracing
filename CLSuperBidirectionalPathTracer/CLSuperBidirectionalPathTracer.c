@@ -293,11 +293,11 @@ int main(int argc, char* argv[]){
 
 	printf("Seeds: %d, %d, %d, %d\n", seeds.x, seeds.y, seeds.z, seeds.w);
 
-	/*size_t lws_max;
+	size_t lws_max;
 	err = clGetKernelWorkGroupInfo(pathtracer_k, d, CL_KERNEL_WORK_GROUP_SIZE, 
 		sizeof(lws_max), &lws_max, NULL);
 	ocl_check(err, "Max lws for pathtracer");
-	*/
+	
 	const char *imageName = "result.ppm";
 	struct imgInfo resultInfo;
 	resultInfo.channels = 4;
@@ -345,7 +345,13 @@ int main(int argc, char* argv[]){
 
 	parseArrayFromFile("spheres.txt", Spheres);
 	parseArrayFromFile("planes.txt", Planes);
+
 	cl_int ntriangles = parseTrianglesFromFile("triangles.txt", Triangles);
+	if(ntriangles > lws_max){
+		printf("Too many triangles for local memory: reducing from %d to to %ld\n", ntriangles, lws_max);
+		ntriangles = lws_max;
+	}
+
 	cl_int nlights = parseLightsFromFile("lights.txt", scenelights);
 
 	printf("Number of triangles: %d\n", ntriangles);

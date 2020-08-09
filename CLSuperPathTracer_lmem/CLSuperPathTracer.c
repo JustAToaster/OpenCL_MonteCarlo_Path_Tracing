@@ -216,7 +216,7 @@ cl_event pathTracer(cl_kernel pathtracer_k, cl_command_queue que, cl_mem d_rende
 
 int main(int argc, char* argv[]){
 
-	int img_width = 256, img_height = 256;
+	int img_width = 512, img_height = 512;
 
 	if(argc > 1){
 		img_width = atoi(argv[1]);
@@ -247,7 +247,6 @@ int main(int argc, char* argv[]){
 	err = clGetKernelWorkGroupInfo(pathtracer_k, d, CL_KERNEL_WORK_GROUP_SIZE, 
 		sizeof(lws_max), &lws_max, NULL);
 	ocl_check(err, "Max lws for pathtracer");
-	size_t gws_max = 131072;
 
 	const char *imageName = "result.ppm";
 	struct imgInfo resultInfo;
@@ -296,7 +295,13 @@ int main(int argc, char* argv[]){
 
 	parseArrayFromFile("spheres.txt", Spheres);
 	parseArrayFromFile("planes.txt", Planes);
+	
 	cl_int ntriangles = parseTrianglesFromFile("triangles.txt", Triangles);
+	if(ntriangles > lws_max){
+		printf("Too many triangles for local memory: reducing from %d to to %ld\n", ntriangles, lws_max);
+		ntriangles = lws_max;
+	}
+
 	cl_int nlights = parseLightsFromFile("lights.txt", scenelights);
 
 	printf("Number of triangles: %d\n", ntriangles);
