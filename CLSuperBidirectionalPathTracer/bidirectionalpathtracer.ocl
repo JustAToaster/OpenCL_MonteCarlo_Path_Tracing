@@ -57,7 +57,6 @@ inline float4 Normalize(float4 x){
 inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal, 
 	local int * Spheres, local int * Planes, local Triangle * Triangles, int ntriangles){
 
-	*t = 1e9;	//default distance
 	int m = 0;	//default material
 	float rayDist;
 	float4 intersection;
@@ -71,7 +70,7 @@ inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal,
 
 	//Check for floor intersection
 	rayDist = -origin.z / direction.z;
-	if(.01f < rayDist){
+	if(.01f < rayDist && rayDist < *t){
 		*t = rayDist;
 		*normal = (float4)(0, 0, 1, 0);
 		m = 1;
@@ -161,6 +160,7 @@ inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * r
 
 	int material;
 	for(int maxIter = 5; maxIter--;){
+		t = 1e9;	//default distance
 		material = TraceRay(*origin, *direction, &t, &normal, Spheres, Planes, Triangles, ntriangles);
 		if (!material){
 			//Nothing found and the ray goes upward: Generate a sky color
@@ -181,7 +181,7 @@ inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * r
 
 			//Calculate the lambertian factor
 			lamb_f = dot(light_dir, normal);
-
+			t = distanceFromLight;
 			//Calculate illumination factor (lambertian coefficient > 0 or in shadow)?
 			//half_vec is just a dummy variable because we don't want the normal to be updated
 			//Shadows seem to break everything and make it painfully slow...?
@@ -227,13 +227,14 @@ inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * r
 
 inline float4 SampleFromLightSource(float4 origin, float4 direction, 
 	local int * Spheres, local int * Planes, local Triangle * Triangles, int ntriangles,
-	float light_intensity){
+	float light_intensity, int total_vlp){
 
 	float t;
 
 	float4 normal, intersection;
 	float distanceFromLight, lamb_f;
 
+	t = 1e9;	//default distance
 	int material = TraceRay(origin, direction, &t, &normal, Spheres, Planes, Triangles, ntriangles);
 	if (material != 1 && material != 3){
 		//No diffuse surface or floor found: return dummy light source
@@ -258,12 +259,13 @@ inline float4 SampleFromLightSource(float4 origin, float4 direction,
 	//Clamp to 1
 	if(lamb_f > 1.0f) lamb_f = 1.0f;
 
+	//return a light at position intersection with an intensity proportional to the number of VLPs
 	if(material == 1){
 		//The ray was going downward: return a dim floor light
-		return (float4)(intersection.s012, 2)*lamb_f;
+		return (float4)(intersection.s012, (float)total_vlp/64)*lamb_f;
 	}
 	if(material == 3){	//diffuse shader
-		return ((float4)(intersection.s012, 5) * lamb_f);
+		return ((float4)(intersection.s012, (float)total_vlp/32)*lamb_f);
 	}
 
 }
@@ -275,6 +277,7 @@ kernel void lightTracer(global int * Spheres, global int * Planes,
 	int gi = get_global_id(0);
 	int gws = get_global_size(0);
 	int li = get_local_id(0);
+	int total_vlp = gws * nlights;	//Total number of virtual point lights
 
 	mwc64xvec2_state_t rng;
 	MWC64XVEC2_Seeding(&rng, seeds);
@@ -309,7 +312,7 @@ kernel void lightTracer(global int * Spheres, global int * Planes,
 			randSum = randValues.x*randValues.x + randValues.y*randValues.y;
     	}
 		direction = (float4)(2*randValues.x*sqrt(1-randSum), 2*randValues.y*sqrt(1-randSum), 1-2*randSum, 0);
-		virtual_point_lights[gi+l*gws] = SampleFromLightSource(origin, direction, lSpheres, lPlanes, lTriangles, ntriangles, light_intensity);	//write with stride
+		virtual_point_lights[gi+l*gws] = SampleFromLightSource(origin, direction, lSpheres, lPlanes, lTriangles, ntriangles, light_intensity, total_vlp);	//write with stride
 	}
 }
 

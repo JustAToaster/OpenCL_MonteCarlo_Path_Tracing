@@ -57,7 +57,6 @@ inline float4 Normalize(float4 x){
 inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal, 
 	local int * Spheres, local int * Planes, local Triangle * Triangles, int ntriangles){
 
-	*t = 1e9;	//default distance
 	int m = 0;	//default material
 	float rayDist;
 	float4 intersection;
@@ -71,7 +70,7 @@ inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal,
 
 	//Check for floor intersection
 	rayDist = -origin.z / direction.z;
-	if(.01f < rayDist){
+	if(.01f < rayDist && rayDist < *t){
 		*t = rayDist;
 		*normal = (float4)(0, 0, 1, 0);
 		m = 1;
@@ -108,7 +107,7 @@ inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal,
 					if(rayDist < (*t) && rayDist > 0.01f){
 						*t = rayDist;
 						*normal = Normalize(p + direction * (*t));
-						m = 2;
+						m = 3;
 					}
 				}
 			}
@@ -161,6 +160,7 @@ inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec4_state_t * r
 
 	int material;
 	for(int maxIter = 5; maxIter--;){
+		t = 1e9;	//default distance
 		material = TraceRay(*origin, *direction, &t, &normal, Spheres, Planes, Triangles, ntriangles);
 		if (!material){
 			//Nothing found and the ray goes upward: Generate a sky color

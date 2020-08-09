@@ -371,6 +371,7 @@ int main(int argc, char* argv[]){
 	free(Spheres);
 	free(Planes);
 	free(Triangles);
+	free(scenelights);
 
 	clReleaseKernel(imginit_k);
 	clReleaseKernel(pathtracer_k);
