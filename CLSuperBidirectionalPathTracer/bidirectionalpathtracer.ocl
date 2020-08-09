@@ -262,10 +262,10 @@ inline float4 SampleFromLightSource(float4 origin, float4 direction,
 	//return a light at position intersection with an intensity proportional to the number of VLPs
 	if(material == 1){
 		//The ray was going downward: return a dim floor light
-		return (float4)(intersection.s012, (float)total_vlp/64)*lamb_f;
+		return (float4)(intersection.s012, total_vlp*lamb_f/64);
 	}
 	if(material == 3){	//diffuse shader
-		return ((float4)(intersection.s012, (float)total_vlp/32)*lamb_f);
+		return (float4)(intersection.s012, total_vlp*lamb_f/48);
 	}
 
 }
@@ -299,7 +299,7 @@ kernel void lightTracer(global int * Spheres, global int * Planes,
 	if(li < ntriangles){
 		lTriangles[li]=Triangles[li];
 	}
-
+	barrier(CLK_LOCAL_MEM_FENCE);
 	//for each light, launch a ray in a random direction and get the sample vlp
 	for(int l=0; l<nlights; ++l){
 		current_light = lScenelights[l];
@@ -339,7 +339,7 @@ kernel void pathTracer(global uchar4 * img, global int * Spheres, global int * P
 	if(li < ntriangles){
 		lTriangles[li]=Triangles[li];
 	}
-
+	barrier(CLK_LOCAL_MEM_FENCE);
 	for(int r = 64; r--;){
 		randValues = (float4)(MWC64XVEC2(&rng, 0.0f, 1.0f), MWC64XVEC2(&rng, 0.0f, 1.0f));
 		delta = cam_up * ((randValues.x - 0.5f) * 99) + cam_right * ((randValues.y - 0.5f) * 99);

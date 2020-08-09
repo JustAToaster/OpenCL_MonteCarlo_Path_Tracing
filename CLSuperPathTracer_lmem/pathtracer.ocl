@@ -250,7 +250,7 @@ kernel void pathTracer(global uchar4 * img, global int * Spheres, global int * P
 	if(li < ntriangles){
 		lTriangles[li]=Triangles[i];
 	}
-
+	barrier(CLK_LOCAL_MEM_FENCE);
 	for(int r = 64; r--;){
 		randValues = MWC64XVEC4(&rng, 0.0f, 1.0f);
 		delta = cam_up * ((randValues.x - 0.5f) * 99) + cam_right * ((randValues.y - 0.5f) * 99);

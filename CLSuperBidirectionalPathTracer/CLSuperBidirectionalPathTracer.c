@@ -14,7 +14,6 @@
 #define MAX 256
 #define MAX_TRIANGLES 512
 #define MAX_LIGHTS 5
-#define N_VLP 256	//Virtual point lights per light source
 
 #include "../ocl_boiler.h"
 #include "../pamalign.h"
@@ -166,7 +165,7 @@ cl_event imginit(cl_kernel imginit_k, cl_command_queue que, cl_mem d_render, int
 //Setting up the kernel to compute virtual light points
 cl_event lightTracer(cl_kernel lighttracer_k, cl_command_queue que, 
 	cl_mem d_Spheres, cl_mem d_Planes, cl_mem d_Triangles, cl_int ntriangles, 
-	cl_mem d_scenelights, cl_int nlights, cl_mem d_virtual_lights, cl_uint4 seeds){
+	cl_mem d_scenelights, cl_int nlights, cl_mem d_virtual_lights, int N_VLP, cl_uint4 seeds){
 
 	const size_t gws[] = { N_VLP };
 
@@ -190,9 +189,9 @@ cl_event lightTracer(cl_kernel lighttracer_k, cl_command_queue que,
 	ocl_check(err, "set light tracer arg %d", i-1);
 	err = clSetKernelArg(lighttracer_k, i++, sizeof(seeds), &seeds);
 	ocl_check(err, "set light tracer arg %d", i-1);
-	err = clSetKernelArg(lighttracer_k, i++, sizeof(cl_int)*9 , NULL);	//lSpheres
+	err = clSetKernelArg(lighttracer_k, i++, sizeof(cl_int)*9, NULL);	//lSpheres
 	ocl_check(err, "set light tracer arg %d", i-1);
-	err = clSetKernelArg(lighttracer_k, i++, sizeof(cl_int)*9 , NULL);	//lPlanes
+	err = clSetKernelArg(lighttracer_k, i++, sizeof(cl_int)*9, NULL);	//lPlanes
 	ocl_check(err, "set light tracer arg %d", i-1);
 	err = clSetKernelArg(lighttracer_k, i++, sizeof(cl_Triangle)*ntriangles , NULL);	//lTriangles
 	ocl_check(err, "set light tracer arg %d", i-1);
@@ -209,7 +208,7 @@ cl_event lightTracer(cl_kernel lighttracer_k, cl_command_queue que,
 //Setting up the kernel to render the image
 cl_event pathTracer(cl_kernel pathtracer_k, cl_command_queue que, cl_mem d_render, 
 	cl_mem d_Spheres, cl_mem d_Planes, cl_mem d_Triangles, cl_int ntriangles, 
-	cl_mem d_virtual_lights, cl_int nlights, cl_uint4 seeds, 
+	cl_mem d_virtual_lights, int N_VLP, cl_int nlights, cl_uint4 seeds, 
 	cl_float4 cam_forward, cl_float4 cam_up, cl_float4 cam_right, cl_float4 eye_offset, 
 	cl_int renderWidth, cl_int renderHeight, cl_event lighttracer_evt){
 
@@ -261,13 +260,16 @@ cl_event pathTracer(cl_kernel pathtracer_k, cl_command_queue que, cl_mem d_rende
 
 int main(int argc, char* argv[]){
 
-	int img_width = 512, img_height = 512;
+	int img_width = 512, img_height = 512, N_VLP = 256;
 
 	if(argc > 1){
 		img_width = atoi(argv[1]);
 	}
 	if (argc > 2){
 		img_height = atoi(argv[2]);
+	}
+	if(argc > 3){
+		N_VLP = atoi(argv[3]);
 	}
 
 	cl_platform_id p = select_platform();
@@ -380,12 +382,11 @@ int main(int argc, char* argv[]){
 		&err);
 	ocl_check(err, "create buffer d_virtual_lights");
 
-	cl_event lighttracer_evt = lightTracer(lighttracer_k, que, d_Spheres, d_Planes, d_Triangles, ntriangles, d_scenelights, nlights, d_virtual_lights, seeds);
+	cl_event lighttracer_evt = lightTracer(lighttracer_k, que, d_Spheres, d_Planes, d_Triangles, ntriangles, d_scenelights, nlights, d_virtual_lights, N_VLP, seeds);
 
-	
 	cl_event pathtracer_evt = pathTracer(pathtracer_k, que, d_render, 
 	d_Spheres, d_Planes, d_Triangles, ntriangles, 
-	d_virtual_lights, nlights, seeds, 
+	d_virtual_lights, N_VLP, nlights, seeds, 
 	cam_forward, cam_up, cam_right, eye_offset, 
 	resultInfo.width, resultInfo.height, lighttracer_evt);
 
