@@ -260,7 +260,7 @@ cl_event pathTracer(cl_kernel pathtracer_k, cl_command_queue que, cl_mem d_rende
 
 int main(int argc, char* argv[]){
 
-	int img_width = 512, img_height = 512, N_VLP = 256;
+	int img_width = 512, img_height = 512, N_VLP = 512;
 
 	if(argc > 1){
 		img_width = atoi(argv[1]);

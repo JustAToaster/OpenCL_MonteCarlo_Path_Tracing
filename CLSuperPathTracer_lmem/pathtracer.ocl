@@ -183,7 +183,8 @@ inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec4_state_t * r
 
 			//Calculate illumination factor (lambertian coefficient > 0 or in shadow)?
 			//half_vec is just a dummy variable because we don't want the normal to be updated
-			if(lamb_f < 0 || TraceRay(intersection, light_dir, &t, &half_vec, Spheres, Planes, Triangles, ntriangles)){
+			//if(lamb_f < 0 || TraceRay(intersection, light_dir, &t, &half_vec, Spheres, Planes, Triangles, ntriangles)){
+			if(lamb_f < 0){
 				lamb_f = 0;
 			}
 			else{

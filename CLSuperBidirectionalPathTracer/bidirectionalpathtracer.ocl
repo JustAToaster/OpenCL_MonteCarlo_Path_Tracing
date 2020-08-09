@@ -183,8 +183,7 @@ inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * r
 			lamb_f = dot(light_dir, normal);
 			t = distanceFromLight;
 			//Calculate illumination factor (lambertian coefficient > 0 or in shadow)?
-			//half_vec is just a dummy variable because we don't want the normal to be updated
-			//Shadows seem to break everything and make it painfully slow...?
+			//...Or just clamp it, shadows make it painfully slow because of the number of VLPs
 			//if(lamb_f < 0 || TraceRay(intersection, light_dir, &t, &half_vec, Spheres, Planes, Triangles, ntriangles)){
 			if(lamb_f < 0){
 				lamb_f = 0;
@@ -197,7 +196,6 @@ inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * r
 
 		if(total_illumination > 1.0f) total_illumination = 1.0f;
 		total_illumination /= 4;
-		//printf("avg_ill: %f\n", total_illumination);
 
 		if(material == 1){
 			//Nothing was hit and the ray was going downward: Generate floor checkerboard texture
@@ -262,10 +260,10 @@ inline float4 SampleFromLightSource(float4 origin, float4 direction,
 	//return a light at position intersection with an intensity proportional to the number of VLPs
 	if(material == 1){
 		//The ray was going downward: return a dim floor light
-		return (float4)(intersection.s012, total_vlp*lamb_f/64);
+		return (float4)(intersection.s012, total_vlp*lamb_f/48);
 	}
 	if(material == 3){	//diffuse shader
-		return (float4)(intersection.s012, total_vlp*lamb_f/48);
+		return (float4)(intersection.s012, total_vlp*lamb_f/72);
 	}
 
 }
