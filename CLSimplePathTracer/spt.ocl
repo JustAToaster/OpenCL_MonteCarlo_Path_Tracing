@@ -137,8 +137,6 @@ kernel void pathTracer(global uchar4 * img, global int * G, float4 cam_forward, 
 	float4 color = (float4)(13, 13, 13, 0);
 	int i = get_global_id(0);
 	int j = get_global_id(1);
-	int width = get_global_size(0);
-	int height = get_global_size(1);
 	mwc64xvec2_state_t rng;
 	MWC64XVEC2_Seeding(&rng, seeds);
 	float4 randValues;
@@ -152,6 +150,6 @@ kernel void pathTracer(global uchar4 * img, global int * G, float4 cam_forward, 
 	}
 	color.w = 255;
 	//printf("Color %d %d: %f, %f, %f, %f\n", i, j, color.x, color.y, color.z, color.w);
-	img[width*height - (j*width+i)]=convert_uchar4(color);
+	img[j*get_global_size(0)+i]=convert_uchar4(color);
 }
 

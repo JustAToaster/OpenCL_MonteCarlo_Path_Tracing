@@ -267,8 +267,8 @@ int main(int argc, char* argv[]){
 	ocl_check(err, "create buffer d_render");
 
 	cl_event initRender_evt = imginit(imginit_k, que, d_render, resultInfo.width, resultInfo.height);
-
-	cl_float4 zVect = { .x = 0, .y = 0, .z = 1, .w = 0 };
+	
+	cl_float4 zVect = { .x = 0, .y = 0, .z = -1, .w = 0 };
 
 	cl_float4 cam_forward = { .x = -6, .y = -16, .z = 0, .w = 0 };
 	cam_forward = Normalize(cam_forward);
@@ -276,7 +276,7 @@ int main(int argc, char* argv[]){
 	cl_float4 cam_right = ScalarTimesVector(0.002, Normalize(CrossProduct(cam_forward, cam_up)));
 
 	cl_float4 eye_offset = VectorSum(ScalarTimesVector((float)(-256), VectorSum(cam_up, cam_right)), cam_forward);
-
+	
 	/*
 	cl_float4 cam_up = { .x = 0.001873f, .y = -0.000702f, .z = 0.0f, .w = 0 };
 	cl_float4 cam_right = { .x = 0.0f, .y = 0.0f, .z = 0.002f, .w = 0 };

@@ -65,11 +65,6 @@ inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal,
 	//Triangle check vars
 	Triangle curr_triangle;
 	float4 edge0, edge2; 
-	/*Geometric solution
-	float triangleNormal, crossEdge;
-	float rayPlaneDot, planeDist;
-	float4 edge1;
-	*/
 	//Moller-Trumbore solution
 	float4 pvec, qvec, tvec;
 	float det, invDet, barycentric_u, barycentric_v;
@@ -113,60 +108,12 @@ inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal,
 					if(rayDist < (*t) && rayDist > 0.01f){
 						*t = rayDist;
 						*normal = Normalize(p + direction * (*t));
-						m = 3;
+						m = 2;
 					}
 				}
 			}
 		}
 	}
-	/*
-	//Check for triangle intersection (geometric solution, not great)
-	for(int i=0; i<ntriangles; i++){
-		curr_triangle = Triangles[i];
-		edge0 = curr_triangle.v1 - curr_triangle.v0;
-		edge1 = curr_triangle.v2 - curr_triangle.v1;
-		edge2 = curr_triangle.v2 - curr_triangle.v0;
-		triangleNormal = cross(edge0, edge2);
-
-		//check if ray and plane are parallel
-		rayPlaneDot = dot(triangleNormal, direction);
-		if(fabs(rayPlaneDot) < 0.01f){
-			continue;	//they almost certainly do not intersect, check next triangle
-		}
-		//Find distance from the origin to the plane that contains the triangle
-		planeDist = dot(triangleNormal, curr_triangle.v0);
-		//Compute t from ray parametric equation, the distance between ray and plane
-		rayDist = (dot(triangleNormal, origin) + planeDist)/-rayPlaneDot;
-		if (rayDist < 0){
-			continue;	//ray is behind the triangle, check next triangle
-		}
-		intersection = origin + rayDist * direction;
-
-		//Inside-outside test
-		//Edge 0
-		crossEdge = cross(edge0, intersection - curr_triangle.v0);
-		if(dot(triangleNormal, crossEdge) < 0){
-			continue;	//The intersection point is on the right side, check next triangle
-		}
-		//Edge 1
-		crossEdge = cross(edge1, intersection - curr_triangle.v1);
-		if(dot(triangleNormal, crossEdge) < 0){
-			continue;	//The intersection point is on the right side, check next triangle
-		}
-		//Edge 2
-		edge2 *= -1;	//the vector used to compute the normal points the other way
-		crossEdge = cross(edge2, intersection - curr_triangle.v2);
-		if(dot(triangleNormal, crossEdge) < 0){
-			continue;	//The intersection point is on the right side, check next triangle
-		}
-		//Ray hits the triangle
-		if(rayDist < *t){
-			*t = rayDist;
-			*normal = Normalize(intersection);
-			m = 3;
-		}
-	}
-	*/
 	
 	//Check for triangle intersection (Moller-Trumbore)
 	for(int i=0; i<ntriangles; i++){
@@ -176,9 +123,7 @@ inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal,
 
 		pvec = cross(direction, edge2);
 		det = dot(edge0, pvec);
-		if(fabs(det) < 0.01f){
-			continue;
-		}
+		if(fabs(det) < 0.01f)	continue;
 		invDet = 1/det;
 		tvec = origin - curr_triangle.v0;
 		barycentric_u = dot(tvec, pvec) * invDet;
@@ -208,9 +153,9 @@ inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec4_state_t * r
 
 	float4 randValues;
 	float4 intersection, half_vec;
-	float t, shadow_t;
+	float t;
 
-	float4 normal, shadow_normal, light_dir, light_pos;
+	float4 normal, light_dir, light_pos;
 	float distanceFromLight, light_intensity;
 	float lamb_f, color, total_illumination = 0.0f;
 
@@ -237,7 +182,8 @@ inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec4_state_t * r
 			lamb_f = dot(light_dir, normal);
 
 			//Calculate illumination factor (lambertian coefficient > 0 or in shadow)?
-			if(lamb_f < 0 || TraceRay(intersection, light_dir, &shadow_t, &shadow_normal, Spheres, Planes, Triangles, ntriangles)){
+			//half_vec is just a dummy variable because we don't want the normal to be updated
+			if(lamb_f < 0 || TraceRay(intersection, light_dir, &t, &half_vec, Spheres, Planes, Triangles, ntriangles)){
 				lamb_f = 0;
 			}
 			else{
@@ -283,8 +229,6 @@ kernel void pathTracer(global uchar4 * img, global int * Spheres, global int * P
 	float4 color = (float4)(13, 13, 13, 0);
 	int i = get_global_id(0);
 	int j = get_global_id(1);
-	int width = get_global_size(0);
-	int height = get_global_size(1);
 	mwc64xvec4_state_t rng;
 	MWC64XVEC4_Seeding(&rng, seeds);
 	float4 randValues;
@@ -299,6 +243,6 @@ kernel void pathTracer(global uchar4 * img, global int * Spheres, global int * P
 	}
 	color.w = 255;
 	//printf("Color %d %d: %f, %f, %f, %f\n", i, j, color.x, color.y, color.z, color.w);
-	img[width*height - (j*width+i)]=convert_uchar4(color);
+	img[j*get_global_size(0)+i]=convert_uchar4(color);
 }
 

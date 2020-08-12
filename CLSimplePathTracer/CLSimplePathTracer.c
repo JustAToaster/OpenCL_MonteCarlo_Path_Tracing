@@ -154,7 +154,7 @@ int main(int argc, char* argv[]){
 
 	cl_event initRender_evt = imginit(imginit_k, que, d_render, resultInfo.width, resultInfo.height);
 
-	cl_float4 zVect = { .x = 0, .y = 0, .z = 1, .w = 0 };
+	cl_float4 zVect = { .x = 0, .y = 0, .z = -1, .w = 0 };
 
 	cl_float4 cam_forward = { .x = -6, .y = -16, .z = 0, .w = 0 };
 	cam_forward = NotOperator(cam_forward);
