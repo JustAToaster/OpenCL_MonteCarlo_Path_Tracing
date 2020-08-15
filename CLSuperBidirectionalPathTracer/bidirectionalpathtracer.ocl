@@ -269,13 +269,13 @@ inline float4 SampleFromLightSource(float4 origin, float4 direction,
 	//Clamp to 1
 	if(lamb_f > 1.0f) lamb_f = 1.0f;
 
-	//return a light at position intersection with an intensity proportional to the number of VLPs
+	//return a light at position intersection with an intensity inversely proportional to the number of VLPs
 	if(material == 1){
-		//The ray was going downward: return a dim floor light
-		return (float4)(intersection.s012, total_vlp*lamb_f/48);
+		//The ray was going downward: return floor light
+		return (float4)(intersection.s012, 70*lamb_f/(total_vlp/512));
 	}
 	if(material == 3){	//diffuse shader
-		return (float4)(intersection.s012, total_vlp*lamb_f/72);
+		return (float4)(intersection.s012, 40*lamb_f/(total_vlp/512));
 	}
 
 }
