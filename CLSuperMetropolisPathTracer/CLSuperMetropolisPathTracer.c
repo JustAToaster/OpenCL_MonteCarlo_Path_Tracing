@@ -29,6 +29,7 @@ typedef struct{
 	cl_float4 v1;
 	cl_float4 v2;
 	cl_float4 v3;
+	cl_uchar length;
 } cl_Path;
 
 cl_float4 VectorSum(cl_float4 x, cl_float4 y){
@@ -447,14 +448,14 @@ int main(int argc, char* argv[]){
 
 	cl_mem d_seedpaths = clCreateBuffer(ctx,
 		CL_MEM_READ_WRITE,
-		sizeof(cl_float4)*nseedpaths*nlights, NULL,
+		sizeof(cl_Path)*nseedpaths*nlights, NULL,
 		&err);
 	ocl_check(err, "create buffer d_virtual_lights");
 
 	//Virtual Light Points buffer which will be filled with samples based on the seed paths
 	cl_mem d_virtual_lights = clCreateBuffer(ctx,
 		CL_MEM_READ_WRITE,
-		sizeof(cl_float4)*nseedpaths*nlights, NULL,
+		sizeof(cl_float4)*nseedpaths*4*nlights, NULL,
 		&err);
 	ocl_check(err, "create buffer d_virtual_lights");
 
@@ -464,7 +465,7 @@ int main(int argc, char* argv[]){
 
 	cl_event pathtracer_evt = pathTracer(pathtracer_k, que, d_render, 
 	d_Spheres, d_Planes, d_Triangles, ntriangles, 
-	d_virtual_lights, nseedpaths, nlights, seeds, 
+	d_virtual_lights, nseedpaths*4, nlights, seeds, 
 	cam_forward, cam_up, cam_right, eye_offset, 
 	resultInfo.width, resultInfo.height, lighttracer_evt);
 
@@ -488,7 +489,7 @@ int main(int argc, char* argv[]){
 	double runtime_metrolighttracer_ms = runtime_ms(metrolighttracer_evt);
 	double runtime_pathtracer_ms = runtime_ms(pathtracer_evt);
 	double runtime_getRender_ms = runtime_ms(getRender_evt);
-	double total_time_ms = runtime_initRender_ms + runtime_lighttracer_ms + runtime_pathtracer_ms + runtime_getRender_ms;
+	double total_time_ms = runtime_initRender_ms + runtime_lighttracer_ms + runtime_metrolighttracer_ms + runtime_pathtracer_ms + runtime_getRender_ms;
 
 	double initRender_bw_gbs = resultInfo.data_size/1.0e6/runtime_initRender_ms;
 	double getRender_bw_gbs = resultInfo.data_size/1.0e6/runtime_getRender_ms;
@@ -497,10 +498,10 @@ int main(int argc, char* argv[]){
 	double pathtracer_bw_gbs = resultInfo.data_size/1.0e6/runtime_pathtracer_ms;
 
 	printf("init image: %ld uchar in %gms: %g GB/s\n", resultInfo.data_size, runtime_initRender_ms, initRender_bw_gbs);
-	printf("light paths random sampling : %d virtual lights in %gms: %g GB/s\n",
-		nseedpaths, runtime_lighttracer_ms, lighttracer_bw_gbs);
+	printf("light paths random sampling : %d random light paths in %gms: %g GB/s\n",
+		nseedpaths*nlights, runtime_lighttracer_ms, lighttracer_bw_gbs);
 	printf("light paths metropolis sampling : %d virtual lights in %gms: %g GB/s\n",
-		nseedpaths, runtime_lighttracer_ms, lighttracer_bw_gbs);
+		nseedpaths*4*nlights, runtime_metrolighttracer_ms, metrolighttracer_bw_gbs);
 	printf("rendering : %ld pixels in %gms: %g GB/s\n",
 		resultInfo.data_size, runtime_pathtracer_ms, pathtracer_bw_gbs);
 	printf("read render data : %ld uchar in %gms: %g GB/s\n",
