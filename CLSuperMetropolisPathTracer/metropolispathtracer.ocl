@@ -175,11 +175,10 @@ inline void AddRandomVertex(float4 origin, float4 * vertexToAdd, Path * path, lo
 	const float4 direction = GetRandomDirection(rng);
 	float4 normal;
 	float t = 1e9;	//default distance
-	if(TraceRay(origin, direction, &t, &normal, lSpheres, lPlanes, lTriangles, ntriangles)){	//Sky hit: the random path for this light source stops here
+	if(TraceRay(origin, direction, &t, &normal, lSpheres, lPlanes, lTriangles, ntriangles)){
 		*vertexToAdd = origin + direction * t;
 		path->length += 1;
 	}
-	else *vertexToAdd = origin;
 }
 
 inline Path GetRandomPath(float4 origin, local int * lSpheres, local int * lPlanes, local Triangle * lTriangles, int ntriangles, mwc64xvec2_state_t rng){
@@ -210,7 +209,7 @@ inline float4 SimplePerturbation(float4 vertex, mwc64xvec2_state_t rng){
 	return vertex + randOffset;
 }
 
-//Keller perturbations from http://cg.iit.bme.hu/~szirmay/paper50_electronic.pdf
+//Commonly used perturbations from http://cg.iit.bme.hu/~szirmay/paper50_electronic.pdf
 inline float4 Perturbation(float4 vertex, mwc64xvec2_state_t rng){
 	float4 mutatedVertex;	
 	const float4 randValues = (float4)(MWC64XVEC2(&rng, 0.0f, 1.0f),MWC64XVEC2(&rng, 0.0f, 1.0f).x, 0);
@@ -253,6 +252,10 @@ inline float4 Perturbation(float4 vertex, mwc64xvec2_state_t rng){
 
 //Mutate by adding vertices and perturbation
 inline void Mutate(Path * seedpath, float4 origin, local int * lSpheres, local int * lPlanes, local Triangle * lTriangles, int ntriangles, mwc64xvec2_state_t rng){
+	if(seedpath->length == 0){	//Path is empty, try and make a new one
+		*seedpath = GetRandomPath(origin, lSpheres, lPlanes, lTriangles, ntriangles, rng);
+		if(seedpath->length == 0) return;	//Still empty, try again next round
+	}
 	float2 randValues = MWC64XVEC2(&rng, 0.0f, 1.0f);
 	const float mutation_probability = 1.0f/(seedpath->length+0.2f);
 	if(mutation_probability < randValues.x) return;
@@ -267,15 +270,13 @@ inline void Mutate(Path * seedpath, float4 origin, local int * lSpheres, local i
 		}
 		if (randValues.y > 0.3f){
 			AddRandomVertex(seedpath->v0, &(seedpath->v1), seedpath, lSpheres, lPlanes, lTriangles, ntriangles, rng);
-			if (seedpath->v0.w == 1.0f) return;
+			if (seedpath->length == 1) return;
 		}
 		if (randValues.y > 0.7f){
 			AddRandomVertex(seedpath->v1, &(seedpath->v2), seedpath, lSpheres, lPlanes, lTriangles, ntriangles, rng);
-			if (seedpath->v0.w == 2.0f) return;
+			if (seedpath->length == 2) return;
 		}
-		if (randValues.y > 0.9f){
-			AddRandomVertex(seedpath->v2, &(seedpath->v3), seedpath, lSpheres, lPlanes, lTriangles, ntriangles, rng);
-		}
+		if (randValues.y > 0.9f) AddRandomVertex(seedpath->v2, &(seedpath->v3), seedpath, lSpheres, lPlanes, lTriangles, ntriangles, rng);
 	}
 	else if (seedpath->length == 2){
 		//Try perturbation (100%), try adding 1 (30%) or 2 (20%) vertices
@@ -288,11 +289,9 @@ inline void Mutate(Path * seedpath, float4 origin, local int * lSpheres, local i
 		}
 		if (randValues.y < 0.3f){
 			AddRandomVertex(seedpath->v1, &(seedpath->v2), seedpath, lSpheres, lPlanes, lTriangles, ntriangles, rng);
-			if (seedpath->v0.w == 2.0f) return;
+			if (seedpath->length == 2) return;
 		}
-		if (randValues.y < 0.2f){
-			AddRandomVertex(seedpath->v2, &(seedpath->v3), seedpath, lSpheres, lPlanes, lTriangles, ntriangles, rng);
-		}
+		if (randValues.y < 0.2f) AddRandomVertex(seedpath->v2, &(seedpath->v3), seedpath, lSpheres, lPlanes, lTriangles, ntriangles, rng);
 	}
 	else if (seedpath->length == 3){
 		//Try perturbation (100%), try adding 1 vertex (20%)
@@ -306,9 +305,7 @@ inline void Mutate(Path * seedpath, float4 origin, local int * lSpheres, local i
 			seedpath->v1 = temp_path.v1;
 			seedpath->v2 = temp_path.v2;
 		}
-		if (randValues.y < 0.2f){
-			AddRandomVertex(seedpath->v2, &(seedpath->v3), seedpath, lSpheres, lPlanes, lTriangles, ntriangles, rng);
-		}
+		if (randValues.y < 0.2f) AddRandomVertex(seedpath->v2, &(seedpath->v3), seedpath, lSpheres, lPlanes, lTriangles, ntriangles, rng);
 	}
 	else if (seedpath->length == 4){
 		//Try perturbation
@@ -551,16 +548,12 @@ kernel void MetropolisLightTracer(global int * Spheres, global int * Planes,
 		curr_vlp2 = (float4)(0);
 		curr_vlp3 = (float4)(0);
 
-		if(seedpath.length == 0){	//Path is empty, try and make a new one
-			seedpath = GetRandomPath(origin, lSpheres, lPlanes, lTriangles, ntriangles, rng);
-			if(seedpath.length == 0){	//Still empty, give up. Do not want to force it, maybe the scene is empty
-				virtual_point_lights[gi+l*gws] = (float16)(curr_vlp0, curr_vlp1, curr_vlp2, curr_vlp3);
-				continue;
-			}
-		}
-
 		for(int m = 0; m < mutation_rounds; ++m){
 			Mutate(&seedpath, origin, lSpheres, lPlanes, lTriangles, ntriangles, rng);
+		}
+		if(seedpath.length == 0){	//Still empty after all the attempts, give up: do not want to force it (in case the scene is empty)
+			virtual_point_lights[gi+l*gws] = (float16)(curr_vlp0, curr_vlp1, curr_vlp2, curr_vlp3);
+			continue;
 		}
 
 		//First vertex of the light path (after the light origin)

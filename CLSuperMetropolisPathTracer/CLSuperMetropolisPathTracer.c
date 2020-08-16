@@ -323,7 +323,7 @@ cl_event pathTracer(cl_kernel pathtracer_k, cl_command_queue que, cl_mem d_rende
 int main(int argc, char* argv[]){
 
 	int img_width = 512, img_height = 512, nseedpaths = 512;
-	cl_int mutation_rounds = 1;
+	cl_int mutation_rounds = 8;
 	if (argc == 1){
 		fprintf(stderr, "Use: %s [img_width] [img_height] [nseedpaths] [mutation_rounds]\n", argv[0]);
 	}

@@ -1,0 +1,5 @@
+LDLIBS=-framework OpenCL
+
+TARGETS = CLSuperMetropolisPathTracer
+
+all: $(TARGETS)
