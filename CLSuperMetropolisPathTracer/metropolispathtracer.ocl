@@ -250,6 +250,18 @@ inline float4 Perturbation(float4 vertex, mwc64xvec2_state_t rng){
 	
 }
 
+inline int VerifyIntersection(float4 origin, float4 destination, local int * lSpheres, local int * lPlanes, local Triangle * lTriangles, int ntriangles){
+	float t;
+	float4 normal;
+	const float4 direction = Normalize(destination - origin);
+	const int m = TraceRay(origin, direction, &t, &normal, lSpheres, lPlanes, lTriangles, ntriangles);
+	if (!m) return false;
+	else{
+		const float4 intersection = origin + direction * t;
+		return (destination.x == intersection.x && destination.y == intersection.y && destination.z == intersection.z);
+	}
+}
+
 //Mutate by adding vertices and perturbation
 inline void Mutate(Path * seedpath, float4 origin, local int * lSpheres, local int * lPlanes, local Triangle * lTriangles, int ntriangles, mwc64xvec2_state_t rng){
 	if(seedpath->length == 0){	//Path is empty, try and make a new one
@@ -260,12 +272,10 @@ inline void Mutate(Path * seedpath, float4 origin, local int * lSpheres, local i
 	const float mutation_probability = 1.0f/(seedpath->length+0.2f);
 	if(mutation_probability < randValues.x) return;
 	Path temp_path;
-	float t;
-	float4 normal;
 	if (seedpath->length == 1){
 		//Try perturbation (100%), try adding 1 (40%), 2 (20%) or 3 (10%) vertices
 		temp_path.v0 = Perturbation(seedpath->v0, rng);
-		if (TraceRay(origin, Normalize(temp_path.v0 - origin), &t, &normal, lSpheres, lPlanes, lTriangles, ntriangles)){
+		if (VerifyIntersection(origin, temp_path.v0, lSpheres, lPlanes, lTriangles, ntriangles)){
 			seedpath->v0 = temp_path.v0;
 		}
 		if (randValues.y > 0.3f){
@@ -282,8 +292,8 @@ inline void Mutate(Path * seedpath, float4 origin, local int * lSpheres, local i
 		//Try perturbation (100%), try adding 1 (30%) or 2 (20%) vertices
 		temp_path.v0 = Perturbation(seedpath->v0, rng);
 		temp_path.v1 = Perturbation(seedpath->v1, rng);
-		if (TraceRay(origin, Normalize(temp_path.v0 - origin), &t, &normal, lSpheres, lPlanes, lTriangles, ntriangles) 
-		&& TraceRay(temp_path.v0, Normalize(temp_path.v1 - temp_path.v0), &t, &normal, lSpheres, lPlanes, lTriangles, ntriangles)){
+		if (VerifyIntersection(origin, temp_path.v0, lSpheres, lPlanes, lTriangles, ntriangles) 
+		&& VerifyIntersection(temp_path.v0, temp_path.v1, lSpheres, lPlanes, lTriangles, ntriangles)){
 			seedpath->v0 = temp_path.v0;
 			seedpath->v1 = temp_path.v1;
 		}
@@ -298,9 +308,9 @@ inline void Mutate(Path * seedpath, float4 origin, local int * lSpheres, local i
 		temp_path.v0 = Perturbation(seedpath->v0, rng);
 		temp_path.v1 = Perturbation(seedpath->v1, rng);
 		temp_path.v2 = Perturbation(seedpath->v2, rng);
-		if (TraceRay(origin, Normalize(temp_path.v0 - origin), &t, &normal, lSpheres, lPlanes, lTriangles, ntriangles)
-		&& TraceRay(temp_path.v0, Normalize(temp_path.v1 - temp_path.v0), &t, &normal, lSpheres, lPlanes, lTriangles, ntriangles)
-		&& TraceRay(temp_path.v1, Normalize(temp_path.v2 - temp_path.v1), &t, &normal, lSpheres, lPlanes, lTriangles, ntriangles)){
+		if (VerifyIntersection(origin, temp_path.v0, lSpheres, lPlanes, lTriangles, ntriangles) 
+		&& VerifyIntersection(temp_path.v0, temp_path.v1, lSpheres, lPlanes, lTriangles, ntriangles)
+		&& VerifyIntersection(temp_path.v1, temp_path.v2, lSpheres, lPlanes, lTriangles, ntriangles)){
 			seedpath->v0 = temp_path.v0;
 			seedpath->v1 = temp_path.v1;
 			seedpath->v2 = temp_path.v2;
@@ -314,10 +324,10 @@ inline void Mutate(Path * seedpath, float4 origin, local int * lSpheres, local i
 		temp_path.v2 = Perturbation(seedpath->v2, rng);
 		temp_path.v3 = Perturbation(seedpath->v3, rng);
 
-		if (TraceRay(origin, Normalize(temp_path.v0 - origin), &t, &normal, lSpheres, lPlanes, lTriangles, ntriangles)
-		&& TraceRay(temp_path.v0, Normalize(temp_path.v1 - temp_path.v0), &t, &normal, lSpheres, lPlanes, lTriangles, ntriangles)
-		&& TraceRay(temp_path.v1, Normalize(temp_path.v2 - temp_path.v1), &t, &normal, lSpheres, lPlanes, lTriangles, ntriangles)
-		&& TraceRay(temp_path.v2, Normalize(temp_path.v3 - temp_path.v2), &t, &normal, lSpheres, lPlanes, lTriangles, ntriangles)){
+		if (VerifyIntersection(origin, temp_path.v0, lSpheres, lPlanes, lTriangles, ntriangles) 
+		&& VerifyIntersection(temp_path.v0, temp_path.v1, lSpheres, lPlanes, lTriangles, ntriangles)
+		&& VerifyIntersection(temp_path.v1, temp_path.v2, lSpheres, lPlanes, lTriangles, ntriangles)
+		&& VerifyIntersection(temp_path.v2, temp_path.v3, lSpheres, lPlanes, lTriangles, ntriangles)){
 			*seedpath = temp_path;
 		}
 		

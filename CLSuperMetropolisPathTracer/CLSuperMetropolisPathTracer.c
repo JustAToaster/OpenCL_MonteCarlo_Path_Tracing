@@ -427,6 +427,7 @@ int main(int argc, char* argv[]){
 
 	printf("Number of triangles: %d\n", ntriangles);
 	printf("Number of lights: %d\n", nlights);
+	printf("Mutation rounds: %d\n", mutation_rounds);
 
 	cl_mem d_Spheres = clCreateBuffer(ctx,
 		CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
