@@ -264,7 +264,7 @@ cl_event MetropolisLightTracer(cl_kernel metrolighttracer_k, cl_command_queue qu
 //Setting up the kernel to render the image
 cl_event pathTracer(cl_kernel pathtracer_k, cl_command_queue que, cl_mem d_render, 
 	cl_mem d_Spheres, cl_mem d_Planes, cl_mem d_Triangles, cl_int ntriangles, 
-	cl_mem d_virtual_lights, int N_VLP, cl_int nlights, cl_uint4 seeds, 
+	cl_mem d_virtual_lights, int N_VLP, cl_mem d_scenelights, cl_int nlights, cl_uint4 seeds, 
 	cl_float4 cam_forward, cl_float4 cam_up, cl_float4 cam_right, cl_float4 eye_offset, 
 	cl_int renderWidth, cl_int renderHeight, cl_event lighttracer_evt){
 
@@ -290,6 +290,10 @@ cl_event pathTracer(cl_kernel pathtracer_k, cl_command_queue que, cl_mem d_rende
 	ocl_check(err, "set path tracer arg %d", i-1);
 	err = clSetKernelArg(pathtracer_k, i++, sizeof(nvirtuallights), &nvirtuallights);
 	ocl_check(err, "set path tracer arg %d", i-1);
+	err = clSetKernelArg(pathtracer_k, i++, sizeof(d_scenelights), &d_scenelights);
+	ocl_check(err, "set path tracer arg %d", i-1);
+	err = clSetKernelArg(pathtracer_k, i++, sizeof(nlights), &nlights);
+	ocl_check(err, "set path tracer arg %d", i-1);
 	err = clSetKernelArg(pathtracer_k, i++, sizeof(cam_forward), &cam_forward);
 	ocl_check(err, "set path tracer arg %d", i-1);
 	err = clSetKernelArg(pathtracer_k, i++, sizeof(cam_up), &cam_up);
@@ -304,7 +308,9 @@ cl_event pathTracer(cl_kernel pathtracer_k, cl_command_queue que, cl_mem d_rende
 	ocl_check(err, "set path tracer arg %d", i-1);
 	err = clSetKernelArg(pathtracer_k, i++, sizeof(cl_int)*9 , NULL);	//lPlanes
 	ocl_check(err, "set path tracer arg %d", i-1);
-	err = clSetKernelArg(pathtracer_k, i++, sizeof(cl_Triangle)*ntriangles , NULL);	//lTriangles
+	err = clSetKernelArg(pathtracer_k, i++, sizeof(cl_Triangle)*ntriangles, NULL);	//lTriangles
+	ocl_check(err, "set path tracer arg %d", i-1);
+	err = clSetKernelArg(pathtracer_k, i++, sizeof(cl_float4)*nlights, NULL);	//lScenelights
 	ocl_check(err, "set path tracer arg %d", i-1);
 
 	err = clEnqueueNDRangeKernel(que, pathtracer_k, 2, NULL, gws, NULL,
@@ -465,7 +471,7 @@ int main(int argc, char* argv[]){
 
 	cl_event pathtracer_evt = pathTracer(pathtracer_k, que, d_render, 
 	d_Spheres, d_Planes, d_Triangles, ntriangles, 
-	d_virtual_lights, nseedpaths*4, nlights, seeds, 
+	d_virtual_lights, nseedpaths*4, d_scenelights, nlights, seeds, 
 	cam_forward, cam_up, cam_right, eye_offset, 
 	resultInfo.width, resultInfo.height, lighttracer_evt);
 
