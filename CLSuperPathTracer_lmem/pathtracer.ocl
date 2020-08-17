@@ -184,7 +184,6 @@ inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * r
 			//Calculate illumination factor (lambertian coefficient > 0 or in shadow)?
 			//half_vec is just a dummy variable because we don't want the normal to be updated
 			if(lamb_f < 0 || TraceRay(intersection, light_dir, &t, &half_vec, Spheres, Planes, Triangles, ntriangles)){
-			//if(lamb_f < 0){
 				lamb_f = 0;
 			}
 			else{
@@ -258,7 +257,6 @@ kernel void pathTracer(global uchar4 * img, global int * Spheres, global int * P
 		color = Sample(&origin, &direction, &rng, lSpheres, lPlanes, lTriangles, ntriangles, lScenelights, nlights) * 3.5f + color;
 	}
 	color.w = 255;
-	//printf("Color %d %d: %f, %f, %f, %f\n", i, j, color.x, color.y, color.z, color.w);
 	img[j*get_global_size(0)+i]=convert_uchar4(color);
 }
 

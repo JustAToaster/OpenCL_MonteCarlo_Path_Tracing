@@ -44,7 +44,7 @@ kernel void imginit_buf(global uchar4 * img)
 }
 
 //Defined as operator! in the simple CPU tracer
-inline float4 NotOperator(float4 x){
+inline float4 Normalize(float4 x){
 	return ((1/sqrt(dot(x, x))) * x);
 }
 
@@ -72,7 +72,7 @@ inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal,
 					//It does, compute the distance camera-sphere
 					if(s < (*t) && s > 0.01f){
 						*t = s;
-						*normal = NotOperator(p + direction * (*t));
+						*normal = Normalize(p + direction * (*t));
 						m = 2;
 					}
 				}
@@ -93,7 +93,7 @@ inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * r
 	float4 normal, light_dir;
 	float lamb_f, color;
 	int match;
-	while(true){
+	for(int maxIter = 5; maxIter--;){
 		randValues = MWC64XVEC2(rng, 0.0f, 1.0f);
 		match = TraceRay(*origin, *direction, &t, &normal, G);
 		if (!match){
@@ -103,7 +103,7 @@ inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * r
 
 		//A sphere was maybe hit
 		intersection = (*origin) + (*direction) * t;
-		light_dir = NotOperator((float4)(9 + randValues.x, 9 + randValues.y, 16, 0) + intersection * (-1));
+		light_dir = Normalize((float4)(9 + randValues.x, 9 + randValues.y, 16, 0) + intersection * (-1));
 		half_vec = (*direction) + normal * (dot(normal, *direction) * (-2));
 
 		//Calculate the lambertian factor
@@ -123,7 +123,7 @@ inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * r
 		}
 		//m == 2 A sphere was hit. Cast a ray bouncing from the sphere surface.
 		//Attenuate color by 50% since it is bouncing (* 0.5)
-		//Unrolled recursion with an infinite loop and by updating those factors
+		//Unrolled recursion with a loop and by updating those factors
 		else{
 			colorFact += (float4)(color, color, color, 0) * divFact;
 			*origin = intersection;
@@ -135,8 +135,8 @@ inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * r
 
 kernel void pathTracer(global uchar4 * img, global int * G, float4 cam_forward, float4 cam_up, float4 cam_right, float4 eye_offset, uint4 seeds){
 	float4 color = (float4)(13, 13, 13, 0);
-	int i = get_global_id(0);
-	int j = get_global_id(1);
+	const int i = get_global_id(0);
+	const int j = get_global_id(1);
 	mwc64xvec2_state_t rng;
 	MWC64XVEC2_Seeding(&rng, seeds);
 	float4 randValues;
@@ -145,11 +145,10 @@ kernel void pathTracer(global uchar4 * img, global int * G, float4 cam_forward, 
 		randValues = (float4)(MWC64XVEC2(&rng, 0.0f, 1.0f), MWC64XVEC2(&rng, 0.0f, 1.0f));
 		delta = cam_up * ((randValues.x - 0.5f) * 99) + cam_right * ((randValues.y - 0.5f) * 99);
 		origin = (float4)(17, 16, 8, 0) + delta;
-		direction = NotOperator(delta * (-1) + (cam_up * (randValues.z + i) + cam_right * (j + randValues.w) + eye_offset) * 16);
+		direction = Normalize(delta * (-1) + (cam_up * (randValues.z + i) + cam_right * (j + randValues.w) + eye_offset) * 16);
 		color = Sample(&origin, &direction, &rng, G) * 3.5f + color;
 	}
 	color.w = 255;
-	//printf("Color %d %d: %f, %f, %f, %f\n", i, j, color.x, color.y, color.z, color.w);
 	img[j*get_global_size(0)+i]=convert_uchar4(color);
 }
 

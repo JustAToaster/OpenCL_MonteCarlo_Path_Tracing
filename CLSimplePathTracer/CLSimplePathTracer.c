@@ -35,7 +35,7 @@ cl_float4 CrossProduct(cl_float4 x, cl_float4 y){
 }
 
 //Defined as operator! in the simple CPU tracer
-cl_float4 NotOperator(cl_float4 x){
+cl_float4 Normalize(cl_float4 x){
 	return ScalarTimesVector((1/sqrt(ScalarProduct(x, x))), x);
 }
 
@@ -101,7 +101,8 @@ cl_event pathTracer(cl_kernel spt_k, cl_command_queue que, cl_mem d_render, cl_m
 
 int main(int argc, char* argv[]){
 
-	int img_width = 256, img_height = 256;
+	int img_width = 512, img_height = 512;
+	printf("Usage: %s [img_width] [img_height]\n", argv[0]);
 
 	if(argc > 1){
 		img_width = atoi(argv[1]);
@@ -143,7 +144,6 @@ int main(int argc, char* argv[]){
 	resultInfo.height = img_height;	
 	resultInfo.data_size = resultInfo.width*resultInfo.height*resultInfo.channels;
 	resultInfo.data = malloc(resultInfo.data_size);
-	//createBlankImage((uchar*)resultInfo.data, resultInfo.data_size);
 	printf("Processing image %dx%d with data size %ld bytes\n", resultInfo.width, resultInfo.height, resultInfo.data_size);
 
 	cl_mem d_render = clCreateBuffer(ctx,
@@ -157,9 +157,9 @@ int main(int argc, char* argv[]){
 	cl_float4 zVect = { .x = 0, .y = 0, .z = -1, .w = 0 };
 
 	cl_float4 cam_forward = { .x = -6, .y = -16, .z = 0, .w = 0 };
-	cam_forward = NotOperator(cam_forward);
-	cl_float4 cam_up = ScalarTimesVector(0.002, NotOperator(CrossProduct(zVect, cam_forward)));
-	cl_float4 cam_right = ScalarTimesVector(0.002, NotOperator(CrossProduct(cam_forward, cam_up)));
+	cam_forward = Normalize(cam_forward);
+	cl_float4 cam_up = ScalarTimesVector(0.002, Normalize(CrossProduct(zVect, cam_forward)));
+	cl_float4 cam_right = ScalarTimesVector(0.002, Normalize(CrossProduct(cam_forward, cam_up)));
 
 	cl_float4 eye_offset = VectorSum(ScalarTimesVector((float)(-256), VectorSum(cam_up, cam_right)), cam_forward);
 
@@ -213,7 +213,6 @@ int main(int argc, char* argv[]){
 	printf("read render data : %ld uchar in %gms: %g GB/s\n",
 		resultInfo.data_size, runtime_getRender_ms, getRender_bw_gbs);
 	printf("\nTotal time: %g ms.\n", total_time_ms);
-	//printf("Total:%g;%g\n", intervalSize, runtime_max_ms);
 
 	err = clEnqueueUnmapMemObject(que, d_render, resultInfo.data, 0, NULL, NULL);
 	ocl_check(err, "unmap render");

@@ -223,7 +223,7 @@ inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * r
 		}
 		//m == 2 A reflective surface was hit. Cast a ray bouncing from it.
 		//Attenuate color by 50% since it is bouncing (* 0.5)
-		//Unrolled recursion with an infinite loop and by updating those factors
+		//Unrolled recursion with a loop and by updating those factors
 		else{
 			half_vec = (*direction) + normal * (dot(normal, *direction) * (-2));
 			color = pow(dot(light_dir, half_vec) * (total_illumination > 0), 99);
@@ -361,7 +361,6 @@ kernel void pathTracer(global uchar4 * img, global int * Spheres, global int * P
 		color = Sample(&origin, &direction, &rng, lSpheres, lPlanes, lTriangles, ntriangles, virtual_point_lights, nvlp, lScenelights, nlights) * 3.5f + color;
 	}
 	color.w = 255;
-	//printf("Color %d %d: %f, %f, %f, %f\n", i, j, color.x, color.y, color.z, color.w);
 	img[j*get_global_size(0)+i]=convert_uchar4(color);
 }
 

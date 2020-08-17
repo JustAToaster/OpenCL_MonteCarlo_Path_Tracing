@@ -66,7 +66,6 @@ int parseArrayFromFile(char * fileName, cl_int * arr){
 	int linectr = 0;
 	textFile = fopen(fileName, "r");
 	do{
-		//strcpy(str, "\0");
 		fgets(str, MAX, textFile);
 		arr[linectr] = atoi(str);
 		linectr++;
@@ -89,7 +88,6 @@ int parseTrianglesFromFile(char * fileName, cl_Triangle * arr){
 		arr[curr_triangle].v0.y = atof(y);
 		arr[curr_triangle].v0.z = atof(z);
 		arr[curr_triangle].v0.w = 0.0f;
-		//printf("V0 %f %f %f\n", arr[curr_triangle].v0.x, arr[curr_triangle].v0.y, arr[curr_triangle].v0.z);
 
 		fgets(x, MAX, textFile);	//read END_VERTEX and ignore
 
@@ -100,7 +98,6 @@ int parseTrianglesFromFile(char * fileName, cl_Triangle * arr){
 		arr[curr_triangle].v1.y = atof(y);
 		arr[curr_triangle].v1.z = atof(z);
 		arr[curr_triangle].v1.w = 0.0f;
-		//printf("V1 %f %f %f\n", arr[curr_triangle].v1.x, arr[curr_triangle].v1.y, arr[curr_triangle].v1.z);
 
 		fgets(x, MAX, textFile);	//read END_VERTEX and ignore
 
@@ -111,7 +108,6 @@ int parseTrianglesFromFile(char * fileName, cl_Triangle * arr){
 		arr[curr_triangle].v2.y = atof(y);
 		arr[curr_triangle].v2.z = atof(z);
 		arr[curr_triangle].v2.w = 0.0f;
-		//printf("V2 %f %f %f\n", arr[curr_triangle].v2.x, arr[curr_triangle].v2.y, arr[curr_triangle].v2.z);
 
 		fgets(x, MAX, textFile);	//read END_VERTEX and ignore
 		fgets(x, MAX, textFile);	//read END_TRIANGLE and ignore
@@ -137,7 +133,6 @@ int parseLightsFromFile(char * fileName, cl_float4 * arr){
 		arr[curr_light].y = atof(y);
 		arr[curr_light].z = atof(z);
 		arr[curr_light].w = atof(w);
-		printf("Light %d: %f %f %f %f\n", curr_light, arr[curr_light].x, arr[curr_light].y, arr[curr_light].z, arr[curr_light].w);
 		curr_light++;
 	}
 	fclose(textFile);
@@ -267,6 +262,7 @@ cl_event pathTracer(cl_kernel pathtracer_k, cl_command_queue que, cl_mem d_rende
 int main(int argc, char* argv[]){
 
 	int img_width = 512, img_height = 512, N_VLP = 512;
+	printf("Usage: %s [img_width] [img_height] [N_VLP_per_light]\nLoads data from triangles.txt, lights.txt, spheres.txt and planes.txt", argv[0]);
 
 	if(argc > 1){
 		img_width = atoi(argv[1]);
@@ -313,7 +309,6 @@ int main(int argc, char* argv[]){
 	resultInfo.height = img_height;	
 	resultInfo.data_size = resultInfo.width*resultInfo.height*resultInfo.channels;
 	resultInfo.data = malloc(resultInfo.data_size);
-	//createBlankImage((uchar*)resultInfo.data, resultInfo.data_size);
 	printf("Processing image %dx%d with data size %ld bytes\n", resultInfo.width, resultInfo.height, resultInfo.data_size);
 
 	cl_mem d_render = clCreateBuffer(ctx,
@@ -425,14 +420,14 @@ int main(int argc, char* argv[]){
 
 	double initRender_bw_gbs = resultInfo.data_size/1.0e6/runtime_initRender_ms;
 	double getRender_bw_gbs = resultInfo.data_size/1.0e6/runtime_getRender_ms;
-	double lighttracer_bw_gbs = resultInfo.data_size/1.0e6/runtime_lighttracer_ms;
+	double lighttracer_bw_gbs = N_VLP*nlights*sizeof(cl_float4)/1.0e6/runtime_lighttracer_ms;
 	double pathtracer_bw_gbs = resultInfo.data_size/1.0e6/runtime_pathtracer_ms;
 
 	printf("init image: %ld uchar in %gms: %g GB/s\n", resultInfo.data_size, runtime_initRender_ms, initRender_bw_gbs);
 	printf("virtual light sampling : %d virtual lights in %gms: %g GB/s\n",
-		N_VLP, runtime_lighttracer_ms, lighttracer_bw_gbs);
+		N_VLP*nlights, runtime_lighttracer_ms, lighttracer_bw_gbs);
 	printf("rendering : %ld pixels in %gms: %g GB/s\n",
-		resultInfo.data_size, runtime_pathtracer_ms, pathtracer_bw_gbs);
+		img_width*img_height, runtime_pathtracer_ms, pathtracer_bw_gbs);
 	printf("read render data : %ld uchar in %gms: %g GB/s\n",
 		resultInfo.data_size, runtime_getRender_ms, getRender_bw_gbs);
 	printf("\nTotal time: %g ms.\n", total_time_ms);

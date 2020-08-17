@@ -165,12 +165,6 @@ inline float4 GetRandomDirection(mwc64xvec2_state_t rng){
 	return (float4)(2*randValues.x*sqrt(1-randSum), 2*randValues.y*sqrt(1-randSum), 1-2*randSum, 0);
 }
 
-inline float4 GetRandomNormalDirection(float4 center, float dev_st, mwc64xvec2_state_t rng){
-	float4 randDir1 = GetRandomDirection(rng);
-	float4 randDir2 = GetRandomDirection(rng);
-	return center + dev_st*(sqrt(-2.0f*log(randDir1)) * cos(2.0f*M_PI_F*randDir2));
-}
-
 inline void AddRandomVertex(float4 origin, float4 * vertexToAdd, Path * path, local int * lSpheres, local int * lPlanes, local Triangle * lTriangles, int ntriangles, mwc64xvec2_state_t rng){
 	const float4 direction = GetRandomDirection(rng);
 	float4 normal;
@@ -201,12 +195,6 @@ inline Path GetRandomPath(float4 origin, local int * lSpheres, local int * lPlan
 	}
 	AddRandomVertex(curr_path.v2, &(curr_path.v3), &curr_path, lSpheres, lPlanes, lTriangles, ntriangles, rng);
 	return curr_path;
-}
-
-//Simple perturbations, they do not work well at all for light paths
-inline float4 SimplePerturbation(float4 vertex, mwc64xvec2_state_t rng){
-	const float4 randOffset = (float4)(MWC64XVEC2(&rng, -1.0f, 1.0f), MWC64XVEC2(&rng, -1.0f, 1.0f).x, 0);
-	return vertex + randOffset;
 }
 
 //Commonly used perturbations from http://cg.iit.bme.hu/~szirmay/paper50_electronic.pdf
@@ -250,6 +238,7 @@ inline float4 Perturbation(float4 vertex, mwc64xvec2_state_t rng){
 	
 }
 
+//Check if destination is the first intersection point of a ray that starts from origin in the direction Normalize(destination - origin)
 inline int VerifyIntersection(float4 origin, float4 destination, local int * lSpheres, local int * lPlanes, local Triangle * lTriangles, int ntriangles){
 	float t;
 	float4 normal;
@@ -545,7 +534,7 @@ kernel void MetropolisLightTracer(global int * Spheres, global int * Planes,
 		lTriangles[li]=Triangles[li];
 	}
 	barrier(CLK_LOCAL_MEM_FENCE);
-	//for each light, create a path of light points launching rays in directions dependent on the seed paths and get the sample VLPs
+	//for each light, create get the sample VLPs from the mutated seed path
 	for(int l=0; l<nlights; ++l){
 		current_light = lScenelights[l];
 		origin = (float4)(current_light.s012, 0);	//Get position in 3D space of current light
@@ -635,7 +624,6 @@ kernel void pathTracer(global uchar4 * img, global int * Spheres, global int * P
 		color = Sample(&origin, &direction, &rng, lSpheres, lPlanes, lTriangles, ntriangles, virtual_point_lights, nvlp, lScenelights, nlights) * 3.5f + color;
 	}
 	color.w = 255;
-	//printf("Color %d %d: %f, %f, %f, %f\n", i, j, color.x, color.y, color.z, color.w);
 	img[j*get_global_size(0)+i]=convert_uchar4(color);
 }
 
