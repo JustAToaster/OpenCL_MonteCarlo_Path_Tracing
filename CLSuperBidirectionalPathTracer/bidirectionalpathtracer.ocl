@@ -40,15 +40,6 @@ inline void MWC64XVEC2_Seeding(mwc64xvec2_state_t *s, uint4 seeds){
 	s->c = (uint2)((seeds.z) ^ randomizeId(i), (seeds.w) ^ randomizeId(i));
 }
 
-kernel void imginit_buf(global uchar4 * img)
-{
-	const int j = get_global_id(1);
-	const int i = get_global_id(0);
-	const int size = get_global_size(0);
-
-	img[j*size+i] = (uchar4)(255, 255, 255, 255);
-}
-
 //Defined as operator! in the simple CPU tracer
 inline float4 Normalize(float4 x){
 	return ((1/sqrt(dot(x, x))) * x);

@@ -147,24 +147,6 @@ int parseLightsFromFile(char * fileName, cl_float4 * arr){
 	return curr_light;
 }
 
-cl_event imginit(cl_kernel imginit_k, cl_command_queue que, cl_mem d_render, int plotWidth, int plotHeight){
-
-	const size_t gws[] = { plotWidth, plotHeight };
-
-	cl_event imginit_evt;
-	cl_int err;
-
-	cl_uint i = 0;
-	err = clSetKernelArg(imginit_k, i++, sizeof(d_render), &d_render);
-	ocl_check(err, "set imginit arg %d ", i-1);
-
-	err = clEnqueueNDRangeKernel(que, imginit_k, 2, NULL, gws, NULL,
-		0, NULL, &imginit_evt);
-	ocl_check(err, "enqueue imginit");
-
-	return imginit_evt;	
-}
-
 //Setting up the kernel to compute seed paths
 cl_event lightTracer(cl_kernel lighttracer_k, cl_command_queue que, 
 	cl_mem d_Spheres, cl_mem d_Planes, cl_mem d_Triangles, cl_int ntriangles, 
@@ -342,9 +324,6 @@ int main(int argc, char* argv[]){
 	cl_program prog = create_program("metropolispathtracer.ocl", ctx, d);
 	cl_int err;
 
-	cl_kernel imginit_k = clCreateKernel(prog, "imginit_buf", &err);
-	ocl_check(err, "create kernel imginit");
-
 	cl_kernel pathtracer_k = clCreateKernel(prog, "pathTracer", &err);
 	ocl_check(err, "create kernel pathtracer_k");
 
@@ -380,8 +359,6 @@ int main(int argc, char* argv[]){
 		resultInfo.data_size, NULL,
 		&err);
 	ocl_check(err, "create buffer d_render");
-
-	cl_event initRender_evt = imginit(imginit_k, que, d_render, resultInfo.width, resultInfo.height);
 
 	cl_float4 zVect = { .x = 0, .y = 0, .z = -1, .w = 0 };
 
@@ -485,25 +462,22 @@ int main(int argc, char* argv[]){
 	}
 	else printf("\nSuccessfully created render image %s in the current directory\n\n", imageName);
 
-	double runtime_initRender_ms = runtime_ms(initRender_evt);
 	double runtime_lighttracer_ms = runtime_ms(lighttracer_evt);
 	double runtime_metrolighttracer_ms = runtime_ms(metrolighttracer_evt);
 	double runtime_pathtracer_ms = runtime_ms(pathtracer_evt);
 	double runtime_getRender_ms = runtime_ms(getRender_evt);
-	double total_time_ms = runtime_initRender_ms + runtime_lighttracer_ms + runtime_metrolighttracer_ms + runtime_pathtracer_ms + runtime_getRender_ms;
+	double total_time_ms = runtime_lighttracer_ms + runtime_metrolighttracer_ms + runtime_pathtracer_ms + runtime_getRender_ms;
 
-	double initRender_bw_gbs = resultInfo.data_size/1.0e6/runtime_initRender_ms;
 	double getRender_bw_gbs = resultInfo.data_size/1.0e6/runtime_getRender_ms;
 	double lighttracer_bw_gbs = nseedpaths*nlights*sizeof(cl_float4)*4/1.0e6/runtime_lighttracer_ms;
 	double metrolighttracer_bw_gbs = nseedpaths*nlights*sizeof(cl_float4)*4/1.0e6/runtime_metrolighttracer_ms;
 	double pathtracer_bw_gbs = resultInfo.data_size/1.0e6/runtime_pathtracer_ms;
 
-	printf("init image: %ld uchar in %gms: %g GB/s\n", resultInfo.data_size, runtime_initRender_ms, initRender_bw_gbs);
 	printf("light paths random sampling : %d random light paths in %gms: %g GB/s\n",
 		nseedpaths*nlights, runtime_lighttracer_ms, lighttracer_bw_gbs);
 	printf("light paths metropolis sampling : %d virtual lights in %gms: %g GB/s\n",
 		nseedpaths*4*nlights, runtime_metrolighttracer_ms, metrolighttracer_bw_gbs);
-	printf("rendering : %ld pixels in %gms: %g GB/s\n",
+	printf("rendering : %d pixels in %gms: %g GB/s\n",
 		img_width*img_height, runtime_pathtracer_ms, pathtracer_bw_gbs);
 	printf("read render data : %ld uchar in %gms: %g GB/s\n",
 		resultInfo.data_size, runtime_getRender_ms, getRender_bw_gbs);
@@ -518,7 +492,6 @@ int main(int argc, char* argv[]){
 	free(Triangles);
 	free(scenelights);
 
-	clReleaseKernel(imginit_k);
 	clReleaseKernel(lighttracer_k);
 	clReleaseKernel(metrolighttracer_k);
 	clReleaseKernel(pathtracer_k);

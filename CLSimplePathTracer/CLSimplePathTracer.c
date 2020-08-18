@@ -48,24 +48,6 @@ static inline uint64_t rdtsc(void)
         return val;
 }
 
-cl_event imginit(cl_kernel imginit_k, cl_command_queue que, cl_mem d_render, int plotWidth, int plotHeight){
-
-	const size_t gws[] = { plotWidth, plotHeight };
-
-	cl_event imginit_evt;
-	cl_int err;
-
-	cl_uint i = 0;
-	err = clSetKernelArg(imginit_k, i++, sizeof(d_render), &d_render);
-	ocl_check(err, "set imginit arg %d ", i-1);
-
-	err = clEnqueueNDRangeKernel(que, imginit_k, 2, NULL, gws, NULL,
-		0, NULL, &imginit_evt);
-	ocl_check(err, "enqueue imginit");
-
-	return imginit_evt;	
-}
-
 //Setting up the kernel to render the image
 cl_event pathTracer(cl_kernel spt_k, cl_command_queue que, cl_mem d_render, cl_mem d_G, 
 	cl_uint4 seeds, cl_float4 cam_forward, cl_float4 cam_up, cl_float4 cam_right, cl_float4 eye_offset, 
@@ -118,9 +100,6 @@ int main(int argc, char* argv[]){
 	cl_program prog = create_program("spt.ocl", ctx, d);
 	cl_int err;
 
-	cl_kernel imginit_k = clCreateKernel(prog, "imginit_buf", &err);
-	ocl_check(err, "create kernel imginit");
-
 	cl_kernel spt_k = clCreateKernel(prog, "pathTracer", &err);
 	ocl_check(err, "create kernel spt_k");
 	
@@ -151,8 +130,6 @@ int main(int argc, char* argv[]){
 		resultInfo.data_size, NULL,
 		&err);
 	ocl_check(err, "create buffer d_render");
-
-	cl_event initRender_evt = imginit(imginit_k, que, d_render, resultInfo.width, resultInfo.height);
 
 	cl_float4 zVect = { .x = 0, .y = 0, .z = -1, .w = 0 };
 
@@ -198,16 +175,13 @@ int main(int argc, char* argv[]){
 	}
 	else printf("\nSuccessfully created render image %s in the current directory\n\n", imageName);
 
-	double runtime_initRender_ms = runtime_ms(initRender_evt);
 	double runtime_spt_ms = runtime_ms(spt_evt);
 	double runtime_getRender_ms = runtime_ms(getRender_evt);
-	double total_time_ms = runtime_initRender_ms + runtime_spt_ms + runtime_getRender_ms;
+	double total_time_ms = runtime_spt_ms + runtime_getRender_ms;
 
-	double initRender_bw_gbs = resultInfo.data_size/1.0e6/runtime_initRender_ms;
 	double getRender_bw_gbs = resultInfo.data_size/1.0e6/runtime_getRender_ms;
 	double spt_bw_gbs = resultInfo.data_size/1.0e6/runtime_spt_ms;
 
-	printf("init image: %ld uchar in %gms: %g GB/s\n", resultInfo.data_size, runtime_initRender_ms, initRender_bw_gbs);
 	printf("rendering : %d pixels in %gms: %g GB/s\n",
 		img_width*img_height, runtime_spt_ms, spt_bw_gbs);
 	printf("read render data : %ld uchar in %gms: %g GB/s\n",
@@ -218,7 +192,6 @@ int main(int argc, char* argv[]){
 	ocl_check(err, "unmap render");
 	clReleaseMemObject(d_render);
 
-	clReleaseKernel(imginit_k);
 	clReleaseKernel(spt_k);
 	clReleaseProgram(prog);
 	clReleaseCommandQueue(que);
