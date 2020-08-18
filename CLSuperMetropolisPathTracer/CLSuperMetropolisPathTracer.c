@@ -302,7 +302,7 @@ int main(int argc, char* argv[]){
 	int img_width = 512, img_height = 512, nseedpaths = 512;
 	cl_int mutation_rounds = 8;
 
-	printf("Usage: %s [img_width] [img_height] [N_seedpaths_per_light] [mutation_rounds]\nLoads data from triangles.txt, lights.txt, spheres.txt and planes.txt", argv[0]);
+	printf("Usage: %s [img_width] [img_height] [N_seedpaths_per_light] [mutation_rounds]\nLoads data from triangles.txt, lights.txt, spheres.txt and planes.txt\n", argv[0]);
 
 	if(argc > 1){
 		img_width = atoi(argv[1]);

@@ -1,6 +1,7 @@
 //More complex path tracer in OpenCL based on https://fabiensanglard.net/rayTracing_back_of_business_card/
 //Supports spheres, planes and triangles
 //Four materials (checkerboard texture, sky, diffusive, specular)
+//No depth of field
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -132,6 +133,7 @@ int parseLightsFromFile(char * fileName, cl_float4 * arr){
 		arr[curr_light].y = atof(y);
 		arr[curr_light].z = atof(z);
 		arr[curr_light].w = atof(w);
+		printf("Light %d: %f %f %f %f\n", curr_light, arr[curr_light].x, arr[curr_light].y, arr[curr_light].z, arr[curr_light].w);
 		curr_light++;
 	}
 	fclose(textFile);
@@ -139,19 +141,19 @@ int parseLightsFromFile(char * fileName, cl_float4 * arr){
 }
 
 //Setting up the kernel to render the image
-cl_event pathTracer(cl_kernel pathtracer_k, cl_command_queue que, cl_mem d_render, 
+cl_event pathTracer(cl_kernel pathtracer_k, cl_command_queue que, cl_mem d_temprender,
 	cl_mem d_Spheres, cl_mem d_Planes, cl_mem d_Triangles, cl_int ntriangles, 
 	cl_mem d_scenelights, cl_int nlights,
 	cl_uint4 seeds, cl_float4 cam_forward, cl_float4 cam_up, cl_float4 cam_right, 
 	cl_float4 eye_offset, cl_int renderWidth, cl_int renderHeight){
 
-	const size_t gws[] = { renderWidth, renderHeight };
+	const size_t gws[] = { renderWidth*8, renderHeight*8 };
 
 	cl_event pathtracer_evt;
 	cl_int err;
 
 	cl_uint i = 0;
-	err = clSetKernelArg(pathtracer_k, i++, sizeof(d_render), &d_render);
+	err = clSetKernelArg(pathtracer_k, i++, sizeof(d_temprender), &d_temprender);
 	ocl_check(err, "set path tracer arg %d", i-1);
 	err = clSetKernelArg(pathtracer_k, i++, sizeof(d_Spheres), &d_Spheres);
 	ocl_check(err, "set path tracer arg %d", i-1);
@@ -175,6 +177,14 @@ cl_event pathTracer(cl_kernel pathtracer_k, cl_command_queue que, cl_mem d_rende
 	ocl_check(err, "set path tracer arg %d", i-1);
 	err = clSetKernelArg(pathtracer_k, i++, sizeof(seeds), &seeds);
 	ocl_check(err, "set path tracer arg %d", i-1);
+	err = clSetKernelArg(pathtracer_k, i++, sizeof(cl_int)*9 , NULL);	//lSpheres
+	ocl_check(err, "set path tracer arg %d", i-1);
+	err = clSetKernelArg(pathtracer_k, i++, sizeof(cl_int)*9 , NULL);	//lPlanes
+	ocl_check(err, "set path tracer arg %d", i-1);
+	err = clSetKernelArg(pathtracer_k, i++, sizeof(cl_Triangle)*ntriangles , NULL);	//lTriangles
+	ocl_check(err, "set path tracer arg %d", i-1);
+	err = clSetKernelArg(pathtracer_k, i++, sizeof(cl_float4)*nlights , NULL);	//lScenelights
+	ocl_check(err, "set path tracer arg %d", i-1);
 
 	err = clEnqueueNDRangeKernel(que, pathtracer_k, 2, NULL, gws, NULL,
 		0, NULL, &pathtracer_evt);
@@ -183,10 +193,34 @@ cl_event pathTracer(cl_kernel pathtracer_k, cl_command_queue que, cl_mem d_rende
 	return pathtracer_evt;	
 }
 
+cl_event reduceimg(cl_kernel reduceimg_k, cl_command_queue que, cl_mem d_temprender, cl_mem d_render, int plotWidth, int plotHeight, cl_event pathtracer_evt){
+
+	const size_t lws[] = { 8, 8 };
+	const size_t gws[] = { plotWidth*lws[0], plotHeight*lws[1] };
+
+	cl_event reduceimg_evt;
+	cl_int err;
+
+	cl_uint i = 0;
+	err = clSetKernelArg(reduceimg_k, i++, sizeof(d_temprender), &d_temprender);
+	ocl_check(err, "set reduceimg arg %d ", i-1);
+	err = clSetKernelArg(reduceimg_k, i++, sizeof(d_render), &d_render);
+	ocl_check(err, "set reduceimg arg %d ", i-1);
+	err = clSetKernelArg(reduceimg_k, i++, sizeof(cl_float4)*lws[0]*lws[1], NULL);
+	ocl_check(err, "set reduceimg arg %d ", i-1);
+
+	err = clEnqueueNDRangeKernel(que, reduceimg_k, 2, NULL, gws, lws,
+		1, &pathtracer_evt, &reduceimg_evt);
+	ocl_check(err, "enqueue reduceimg");
+
+	return reduceimg_evt;	
+}
+
 int main(int argc, char* argv[]){
 
 	int img_width = 512, img_height = 512;
-	printf("Usage: %s [img_width] [img_height]\nLoads data from triangles.txt, lights.txt, spheres.txt and planes.txt\n", argv[0]);
+	const int samplesPerPixel = 64;
+	printf("Usage: %s [img_width] [img_height]\nLoads data from triangles.txt, lights.txt, spheres.txt and planes.txt", argv[0]);
 
 	if(argc > 1){
 		img_width = atoi(argv[1]);
@@ -204,6 +238,8 @@ int main(int argc, char* argv[]){
 
 	cl_kernel pathtracer_k = clCreateKernel(prog, "pathTracer", &err);
 	ocl_check(err, "create kernel pathtracer_k");
+	cl_kernel reduceimg_k = clCreateKernel(prog, "reduce4img_lmem", &err);
+	ocl_check(err, "create kernel reduceimg_k");
 	
 	//seeds for the edited MWC64X
 	cl_uint4 seeds = {.x = time(0) & 134217727, .y = (getpid() * getpid() * getpid()) & 134217727, .z = (clock()*clock()) & 134217727, .w = rdtsc() & 134217727};
@@ -214,7 +250,6 @@ int main(int argc, char* argv[]){
 	err = clGetKernelWorkGroupInfo(pathtracer_k, d, CL_KERNEL_WORK_GROUP_SIZE, 
 		sizeof(lws_max), &lws_max, NULL);
 	ocl_check(err, "Max lws for pathtracer");
-	size_t gws_max = 131072;
 
 	const char *imageName = "result.ppm";
 	struct imgInfo resultInfo;
@@ -227,12 +262,18 @@ int main(int argc, char* argv[]){
 	resultInfo.data = malloc(resultInfo.data_size);
 	printf("Processing image %dx%d with data size %ld bytes\n", resultInfo.width, resultInfo.height, resultInfo.data_size);
 
+	cl_mem d_temprender = clCreateBuffer(ctx,	//Temp render with 64 float4 for each pixel
+		CL_MEM_READ_WRITE,
+		resultInfo.data_size*samplesPerPixel*sizeof(float), NULL,
+		&err);
+	ocl_check(err, "create buffer d_temprender");
+
 	cl_mem d_render = clCreateBuffer(ctx,
 		CL_MEM_WRITE_ONLY | CL_MEM_ALLOC_HOST_PTR,
 		resultInfo.data_size, NULL,
 		&err);
 	ocl_check(err, "create buffer d_render");
-
+	
 	cl_float4 zVect = { .x = 0, .y = 0, .z = -1, .w = 0 };
 
 	cl_float4 cam_forward = { .x = -6, .y = -16, .z = 0, .w = 0 };
@@ -241,7 +282,7 @@ int main(int argc, char* argv[]){
 	cl_float4 cam_right = ScalarTimesVector(0.002, Normalize(CrossProduct(cam_forward, cam_up)));
 
 	cl_float4 eye_offset = VectorSum(ScalarTimesVector((float)(-256), VectorSum(cam_up, cam_right)), cam_forward);
-
+	
 	/*
 	cl_float4 cam_up = { .x = 0.001873f, .y = -0.000702f, .z = 0.0f, .w = 0 };
 	cl_float4 cam_right = { .x = 0.0f, .y = 0.0f, .z = 0.002f, .w = 0 };
@@ -260,7 +301,13 @@ int main(int argc, char* argv[]){
 
 	parseArrayFromFile("spheres.txt", Spheres);
 	parseArrayFromFile("planes.txt", Planes);
+	
 	cl_int ntriangles = parseTrianglesFromFile("triangles.txt", Triangles);
+	if(ntriangles > lws_max){
+		printf("Too many triangles for local memory: reducing from %d to to %ld\n", ntriangles, lws_max);
+		ntriangles = lws_max;
+	}
+
 	cl_int nlights = parseLightsFromFile("lights.txt", scenelights);
 
 	printf("Number of triangles: %d\n", ntriangles);
@@ -290,18 +337,21 @@ int main(int argc, char* argv[]){
 		&err);
 	ocl_check(err, "create buffer d_scenelights");
 
-	cl_event pathtracer_evt = pathTracer(pathtracer_k, que, d_render, 
+	cl_event pathtracer_evt = pathTracer(pathtracer_k, que, d_temprender, 
 	d_Spheres, d_Planes, d_Triangles, ntriangles, 
 	d_scenelights, nlights, seeds, 
 	cam_forward, cam_up, cam_right, eye_offset, 
 	resultInfo.width, resultInfo.height);
+
+	cl_event reduceimg_evt = reduceimg(reduceimg_k, que, d_temprender, 
+	d_render, resultInfo.width, resultInfo.height, pathtracer_evt);
 
 	cl_event getRender_evt;
 	
 	resultInfo.data = clEnqueueMapBuffer(que, d_render, CL_TRUE,
 		CL_MAP_READ,
 		0, resultInfo.data_size,
-		1, &pathtracer_evt, &getRender_evt, &err);
+		1, &reduceimg_evt, &getRender_evt, &err);
 	ocl_check(err, "enqueue map d_render");
 
 	err = save_pam(imageName, &resultInfo);
@@ -312,14 +362,18 @@ int main(int argc, char* argv[]){
 	else printf("\nSuccessfully created render image %s in the current directory\n\n", imageName);
 
 	double runtime_pathtracer_ms = runtime_ms(pathtracer_evt);
+	double runtime_reduceimg_ms = runtime_ms(reduceimg_evt);
 	double runtime_getRender_ms = runtime_ms(getRender_evt);
-	double total_time_ms = runtime_pathtracer_ms + runtime_getRender_ms;
+	double total_time_ms = runtime_pathtracer_ms + runtime_reduceimg_ms + runtime_getRender_ms;
 
+	double pathtracer_bw_gbs = resultInfo.data_size*samplesPerPixel*sizeof(float)/1.0e6/runtime_pathtracer_ms;
+	double reduceimg_bw_gbs = resultInfo.data_size/1.0e6/runtime_pathtracer_ms;
 	double getRender_bw_gbs = resultInfo.data_size/1.0e6/runtime_getRender_ms;
-	double pathtracer_bw_gbs = resultInfo.data_size/1.0e6/runtime_pathtracer_ms;
 
-	printf("rendering : %d pixels in %gms: %g GB/s\n",
-		img_width*img_height, runtime_pathtracer_ms, pathtracer_bw_gbs);
+	printf("rendering : %d pixels (with %d samples) in %gms: %g GB/s\n",
+		img_width*img_height, samplesPerPixel, runtime_pathtracer_ms, pathtracer_bw_gbs);
+	printf("reduce img samples : %d pixels (with %d samples) in %gms: %g GB/s\n",
+		img_width*img_height, samplesPerPixel, runtime_reduceimg_ms, reduceimg_bw_gbs);
 	printf("read render data : %ld uchar in %gms: %g GB/s\n",
 		resultInfo.data_size, runtime_getRender_ms, getRender_bw_gbs);
 	printf("\nTotal time: %g ms.\n", total_time_ms);
@@ -331,8 +385,10 @@ int main(int argc, char* argv[]){
 	free(Spheres);
 	free(Planes);
 	free(Triangles);
+	free(scenelights);
 
 	clReleaseKernel(pathtracer_k);
+	clReleaseKernel(reduceimg_k);
 	clReleaseProgram(prog);
 	clReleaseCommandQueue(que);
 	clReleaseContext(ctx);
