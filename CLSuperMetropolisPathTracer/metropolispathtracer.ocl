@@ -57,7 +57,8 @@ inline float4 Normalize(float4 x){
 }
 
 inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal, 
-	local int * Spheres, local int * Planes, local Triangle * Triangles, int ntriangles){
+	local int * restrict Spheres, local int * restrict Planes, 
+	local Triangle * restrict Triangles, int ntriangles){
 
 	int m = 0;	//default material
 	float rayDist;
@@ -156,7 +157,9 @@ inline float4 GetRandomDirection(mwc64xvec2_state_t rng){
 	return (float4)(2*randValues.x*sqrt(1-randSum), 2*randValues.y*sqrt(1-randSum), 1-2*randSum, 0);
 }
 
-inline void AddRandomVertex(float4 origin, float4 * vertexToAdd, Path * path, local int * lSpheres, local int * lPlanes, local Triangle * lTriangles, int ntriangles, mwc64xvec2_state_t rng){
+inline void AddRandomVertex(float4 origin, float4 * vertexToAdd, Path * path, 
+	local int * restrict lSpheres, local int * restrict lPlanes, 
+	local Triangle * restrict lTriangles, int ntriangles, mwc64xvec2_state_t rng){
 	const float4 direction = GetRandomDirection(rng);
 	float4 normal;
 	float t = 1e9;	//default distance
@@ -166,7 +169,8 @@ inline void AddRandomVertex(float4 origin, float4 * vertexToAdd, Path * path, lo
 	}
 }
 
-inline Path GetRandomPath(float4 origin, local int * lSpheres, local int * lPlanes, local Triangle * lTriangles, int ntriangles, mwc64xvec2_state_t rng){
+inline Path GetRandomPath(float4 origin, local int * restrict lSpheres, local int * restrict lPlanes, 
+	local Triangle * restrict lTriangles, int ntriangles, mwc64xvec2_state_t rng){
 	Path curr_path;
 	curr_path.length = 0;	//Default path length
 	AddRandomVertex(origin, &(curr_path.v0), &curr_path, lSpheres, lPlanes, lTriangles, ntriangles, rng);
@@ -230,7 +234,8 @@ inline float4 Perturbation(float4 vertex, mwc64xvec2_state_t rng){
 }
 
 //Check if destination is the first intersection point of a ray that starts from origin in the direction Normalize(destination - origin)
-inline int VerifyIntersection(float4 origin, float4 destination, local int * lSpheres, local int * lPlanes, local Triangle * lTriangles, int ntriangles){
+inline int VerifyIntersection(float4 origin, float4 destination, local int * restrict lSpheres, 
+	local int * restrict lPlanes, local Triangle * restrict lTriangles, int ntriangles){
 	float t;
 	float4 normal;
 	const float4 direction = Normalize(destination - origin);
@@ -315,8 +320,10 @@ inline void Mutate(Path * seedpath, float4 origin, local int * lSpheres, local i
 }
 
 inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * rng, 
-	local int * Spheres, local int * Planes, local Triangle * Triangles, int ntriangles,
-	global float4 * virtual_point_lights, int nvirtuallights, local float4 * scenelights, int nlights){
+	local int * restrict Spheres, local int * restrict Planes, 
+	local Triangle * restrict Triangles, int ntriangles,
+	global const float4 * restrict virtual_point_lights, int nvirtuallights, 
+	local float4 * restrict scenelights, int nlights){
 	//Recursion vars
 	float4 colorFact = (float4)(0, 0, 0, 0);
 	int divFact = 1;
@@ -408,7 +415,8 @@ inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * r
 }
 
 inline float4 SampleFromLightSource(float4 origin, float4 direction, 
-	local int * Spheres, local int * Planes, local Triangle * Triangles, int ntriangles,
+	local int * restrict Spheres, local int * restrict Planes, 
+	local Triangle * restrict Triangles, int ntriangles,
 	float light_intensity, int total_paths){
 
 	float t;
@@ -457,10 +465,12 @@ inline float4 SampleFromLightSource(float4 origin, float4 direction,
 }
 
 //Compute random paths through the scene as seeds for the second phase
-kernel void lightTracer(global int * Spheres, global int * Planes, 
-	global Triangle * Triangles, int ntriangles, global float4 * scenelights, int nlights,
-	global Path * seedpaths, uint4 seeds,
-	local int * lSpheres, local int * lPlanes, local Triangle* lTriangles, local float4 * lScenelights){
+kernel void lightTracer(global const int * restrict Spheres, global const int * restrict Planes, 
+	global const Triangle * restrict Triangles, int ntriangles, 
+	global const float4 * restrict scenelights, int nlights,
+	global Path * restrict seedpaths, uint4 seeds,
+	local int * restrict lSpheres, local int * restrict lPlanes, 
+	local Triangle* restrict lTriangles, local float4 * restrict lScenelights){
 	int gi = get_global_id(0);
 	int gws = get_global_size(0);
 	int li = get_local_id(0);
@@ -493,10 +503,13 @@ kernel void lightTracer(global int * Spheres, global int * Planes,
 }
 
 //Uses seed paths from lightTracer to find more light paths
-kernel void MetropolisLightTracer(global int * Spheres, global int * Planes, 
-	global Triangle * Triangles, int ntriangles, global float4 * scenelights, int nlights,
-	global Path * seedpaths, global float16 * virtual_point_lights, uint4 seeds, int mutation_rounds,
-	local int * lSpheres, local int * lPlanes, local Triangle* lTriangles, local float4 * lScenelights){
+kernel void MetropolisLightTracer(global const int * restrict Spheres, global const int * restrict Planes, 
+	global const Triangle * restrict Triangles, int ntriangles, 
+	global const float4 * restrict scenelights, int nlights,
+	global Path * restrict seedpaths, global float16 * restrict virtual_point_lights, 
+	uint4 seeds, int mutation_rounds,
+	local int * restrict lSpheres, local int * restrict lPlanes, 
+	local Triangle* restrict lTriangles, local float4 * restrict lScenelights){
 	int gi = get_global_id(0);
 	int gws = get_global_size(0);
 	int li = get_local_id(0);
@@ -580,11 +593,13 @@ kernel void MetropolisLightTracer(global int * Spheres, global int * Planes,
 	}
 }
 
-kernel void pathTracer(global uchar4 * img, global int * Spheres, global int * Planes, 
-	global Triangle * Triangles, int ntriangles, global float4 * virtual_point_lights, int nvlp,
-	global float4 * scenelights, int nlights,
+kernel void pathTracer(global uchar4 * restrict img, global const int * restrict Spheres, 
+	global const int * restrict Planes, global const Triangle * restrict Triangles, int ntriangles, 
+	global const float4 * restrict virtual_point_lights, int nvlp,
+	global const float4 * restrict scenelights, int nlights,
 	float4 cam_forward, float4 cam_up, float4 cam_right, float4 eye_offset, uint4 seeds,
-	local int * lSpheres, local int * lPlanes, local Triangle* lTriangles, local float4 * lScenelights){
+	local int * restrict lSpheres, local int * restrict lPlanes, 
+	local Triangle* restrict lTriangles, local float4 * restrict lScenelights){
 	float4 color = (float4)(13, 13, 13, 0);
 	int i = get_global_id(0);
 	int j = get_global_id(1);

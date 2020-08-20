@@ -46,7 +46,8 @@ inline float4 Normalize(float4 x){
 }
 
 inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal, 
-	local int * Spheres, local int * Planes, local Triangle * Triangles, int ntriangles){
+	local int * restrict Spheres, local int * restrict Planes, 
+	local Triangle * restrict Triangles, int ntriangles){
 
 	int m = 0;	//default material
 	float rayDist;
@@ -135,8 +136,8 @@ inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal,
 }
 
 inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * rng, 
-	local int * Spheres, local int * Planes, local Triangle * Triangles, int ntriangles,
-	local float4 * scenelights, int nlights){
+	local int * restrict Spheres, local int * restrict Planes, local Triangle * restrict Triangles, int ntriangles,
+	local float4 * restrict scenelights, int nlights){
 	//Recursion vars
 	float4 colorFact = (float4)(0, 0, 0, 0);
 	int divFact = 1;
@@ -214,10 +215,11 @@ inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * r
 	}
 }
 
-kernel void pathTracer(global uchar4 * img, global int * Spheres, global int * Planes, 
-	global Triangle * Triangles, int ntriangles, global float4 * scenelights, int nlights,
+kernel void pathTracer(global uchar4 * restrict img, global const int * restrict Spheres, 
+	global const int * restrict Planes, global const Triangle * restrict Triangles, int ntriangles, 
+	global const float4 * restrict scenelights, int nlights, 
 	float4 cam_forward, float4 cam_up, float4 cam_right, float4 eye_offset, uint4 seeds,
-	local int * lSpheres, local int * lPlanes, local Triangle* lTriangles, local float4 * lScenelights){
+	local int * restrict lSpheres, local int * restrict lPlanes, local Triangle* restrict lTriangles, local float4 * restrict lScenelights){
 	float4 color = (float4)(13, 13, 13, 0);
 	int i = get_global_id(0);
 	int j = get_global_id(1);

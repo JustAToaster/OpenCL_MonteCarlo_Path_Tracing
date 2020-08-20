@@ -46,7 +46,8 @@ inline float4 Normalize(float4 x){
 }
 
 inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal, 
-	global int * Spheres, global int * Planes, global Triangle * Triangles, int ntriangles){
+	global const int * restrict Spheres, global const int * restrict Planes, 
+	global const Triangle * restrict Triangles, int ntriangles){
 
 	*t = 1e9;	//default distance
 	int m = 0;	//default material
@@ -99,7 +100,7 @@ inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal,
 					if(rayDist < (*t) && rayDist > 0.01f){
 						*t = rayDist;
 						*normal = Normalize(p + direction * (*t));
-						m = 2;
+						m = 3;
 					}
 				}
 			}
@@ -136,13 +137,14 @@ inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal,
 }
 
 inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * rng, 
-	global int * Spheres, global int * Planes, global Triangle * Triangles, int ntriangles,
-	global float4 * scenelights, int nlights){
+	global const int * restrict Spheres, global const int * restrict Planes, 
+	global const Triangle * restrict Triangles, int ntriangles,
+	global const float4 * restrict scenelights, int nlights){
 	//Recursion vars
 	float4 colorFact = (float4)(0, 0, 0, 0);
 	int divFact = 1;
 
-	float4 randValues;
+	float2 randValues;
 	float4 intersection, half_vec;
 	float t;
 
@@ -166,6 +168,7 @@ inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * r
 			randValues = MWC64XVEC2(rng, 0.0f, 1.0f);
 			light_pos = scenelights[i];
 			light_intensity = light_pos.w;
+			if (light_intensity == 0)	continue;
 			light_pos.w = 0;
 			light_dir = Normalize(light_pos + (float4)(randValues,0,0) + intersection * (-1));
 
@@ -214,8 +217,9 @@ inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * r
 	}
 }
 
-kernel void pathTracer(global uchar4 * img, global int * Spheres, global int * Planes, 
-	global Triangle * Triangles, int ntriangles, global float4 * scenelights, int nlights,
+kernel void pathTracer(global uchar4 * restrict img, global const int * restrict Spheres, 
+	global const int * restrict Planes, global const Triangle * restrict Triangles, int ntriangles, 
+	global const float4 * restrict scenelights, int nlights, 
 	float4 cam_forward, float4 cam_up, float4 cam_right, float4 eye_offset, uint4 seeds){
 	float4 color = (float4)(13, 13, 13, 0);
 	int i = get_global_id(0);
