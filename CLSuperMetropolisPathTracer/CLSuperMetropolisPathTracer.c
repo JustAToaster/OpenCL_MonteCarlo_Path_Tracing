@@ -1,6 +1,6 @@
 //Metropolis path tracer in OpenCL based on https://fabiensanglard.net/rayTracing_back_of_business_card/
 //Implemented with virtual point lights (see http://wpage.unina.it/lapegna/documents/AMS2014.pdf)
-//Supports spheres, planes and triangles
+//Supports spheres, squares and triangles
 //Four materials (checkerboard texture, sky, diffusive, specular)
 
 #include <stdlib.h>
@@ -67,7 +67,7 @@ static inline uint64_t rdtsc(void)
         return val;
 }
 
-//Method to retrieve spheres/planes information from file
+//Method to retrieve spheres/squares information from file
 int parseArrayFromFile(char * fileName, cl_int * arr){
 	FILE * textFile;
 	char str[MAX];
@@ -149,7 +149,7 @@ int parseLightsFromFile(char * fileName, cl_float4 * arr){
 
 //Setting up the kernel to compute seed paths
 cl_event lightTracer(cl_kernel lighttracer_k, cl_command_queue que, 
-	cl_mem d_Spheres, cl_mem d_Planes, cl_mem d_Triangles, cl_int ntriangles, 
+	cl_mem d_Spheres, cl_mem d_Squares, cl_mem d_Triangles, cl_int ntriangles, 
 	cl_mem d_scenelights, cl_int nlights, cl_mem d_seedpaths, int nseedpaths, cl_uint4 seeds){
 
 	const size_t gws[] = { nseedpaths };
@@ -160,7 +160,7 @@ cl_event lightTracer(cl_kernel lighttracer_k, cl_command_queue que,
 	cl_uint i = 0;
 	err = clSetKernelArg(lighttracer_k, i++, sizeof(d_Spheres), &d_Spheres);
 	ocl_check(err, "set light tracer arg %d", i-1);
-	err = clSetKernelArg(lighttracer_k, i++, sizeof(d_Planes), &d_Planes);
+	err = clSetKernelArg(lighttracer_k, i++, sizeof(d_Squares), &d_Squares);
 	ocl_check(err, "set light tracer arg %d", i-1);
 	err = clSetKernelArg(lighttracer_k, i++, sizeof(d_Triangles), &d_Triangles);
 	ocl_check(err, "set light tracer arg %d", i-1);
@@ -176,7 +176,7 @@ cl_event lightTracer(cl_kernel lighttracer_k, cl_command_queue que,
 	ocl_check(err, "set light tracer arg %d", i-1);
 	err = clSetKernelArg(lighttracer_k, i++, sizeof(cl_int)*9, NULL);	//lSpheres
 	ocl_check(err, "set light tracer arg %d", i-1);
-	err = clSetKernelArg(lighttracer_k, i++, sizeof(cl_int)*9, NULL);	//lPlanes
+	err = clSetKernelArg(lighttracer_k, i++, sizeof(cl_int)*9, NULL);	//lSquares
 	ocl_check(err, "set light tracer arg %d", i-1);
 	err = clSetKernelArg(lighttracer_k, i++, sizeof(cl_Triangle)*ntriangles , NULL);	//lTriangles
 	ocl_check(err, "set light tracer arg %d", i-1);
@@ -192,7 +192,7 @@ cl_event lightTracer(cl_kernel lighttracer_k, cl_command_queue que,
 
 //Setting up the kernel to compute light paths from seed paths
 cl_event MetropolisLightTracer(cl_kernel metrolighttracer_k, cl_command_queue que, 
-	cl_mem d_Spheres, cl_mem d_Planes, cl_mem d_Triangles, cl_int ntriangles, 
+	cl_mem d_Spheres, cl_mem d_Squares, cl_mem d_Triangles, cl_int ntriangles, 
 	cl_mem d_scenelights, cl_int nlights, cl_mem d_seedpaths, int nseedpaths,
 	cl_mem d_virtual_point_lights, cl_uint4 seeds, cl_int mutation_rounds){
 
@@ -204,7 +204,7 @@ cl_event MetropolisLightTracer(cl_kernel metrolighttracer_k, cl_command_queue qu
 	cl_uint i = 0;
 	err = clSetKernelArg(metrolighttracer_k, i++, sizeof(d_Spheres), &d_Spheres);
 	ocl_check(err, "set metropolis light tracer arg %d", i-1);
-	err = clSetKernelArg(metrolighttracer_k, i++, sizeof(d_Planes), &d_Planes);
+	err = clSetKernelArg(metrolighttracer_k, i++, sizeof(d_Squares), &d_Squares);
 	ocl_check(err, "set metropolis light tracer arg %d", i-1);
 	err = clSetKernelArg(metrolighttracer_k, i++, sizeof(d_Triangles), &d_Triangles);
 	ocl_check(err, "set metropolis light tracer arg %d", i-1);
@@ -224,7 +224,7 @@ cl_event MetropolisLightTracer(cl_kernel metrolighttracer_k, cl_command_queue qu
 	ocl_check(err, "set metropolis light tracer arg %d", i-1);
 	err = clSetKernelArg(metrolighttracer_k, i++, sizeof(cl_int)*9, NULL);	//lSpheres
 	ocl_check(err, "set metropolis light tracer arg %d", i-1);
-	err = clSetKernelArg(metrolighttracer_k, i++, sizeof(cl_int)*9, NULL);	//lPlanes
+	err = clSetKernelArg(metrolighttracer_k, i++, sizeof(cl_int)*9, NULL);	//lSquares
 	ocl_check(err, "set metropolis light tracer arg %d", i-1);
 	err = clSetKernelArg(metrolighttracer_k, i++, sizeof(cl_Triangle)*ntriangles , NULL);	//lTriangles
 	ocl_check(err, "set metropolis light tracer arg %d", i-1);
@@ -240,7 +240,7 @@ cl_event MetropolisLightTracer(cl_kernel metrolighttracer_k, cl_command_queue qu
 
 //Setting up the kernel to render the image
 cl_event pathTracer(cl_kernel pathtracer_k, cl_command_queue que, cl_mem d_render, 
-	cl_mem d_Spheres, cl_mem d_Planes, cl_mem d_Triangles, cl_int ntriangles, 
+	cl_mem d_Spheres, cl_mem d_Squares, cl_mem d_Triangles, cl_int ntriangles, 
 	cl_mem d_virtual_lights, int N_VLP, cl_mem d_scenelights, cl_int nlights, cl_uint4 seeds, 
 	cl_float4 cam_forward, cl_float4 cam_up, cl_float4 cam_right, cl_float4 eye_offset, 
 	cl_int renderWidth, cl_int renderHeight, cl_event lighttracer_evt){
@@ -257,7 +257,7 @@ cl_event pathTracer(cl_kernel pathtracer_k, cl_command_queue que, cl_mem d_rende
 	ocl_check(err, "set path tracer arg %d", i-1);
 	err = clSetKernelArg(pathtracer_k, i++, sizeof(d_Spheres), &d_Spheres);
 	ocl_check(err, "set path tracer arg %d", i-1);
-	err = clSetKernelArg(pathtracer_k, i++, sizeof(d_Planes), &d_Planes);
+	err = clSetKernelArg(pathtracer_k, i++, sizeof(d_Squares), &d_Squares);
 	ocl_check(err, "set path tracer arg %d", i-1);
 	err = clSetKernelArg(pathtracer_k, i++, sizeof(d_Triangles), &d_Triangles);
 	ocl_check(err, "set path tracer arg %d", i-1);
@@ -283,7 +283,7 @@ cl_event pathTracer(cl_kernel pathtracer_k, cl_command_queue que, cl_mem d_rende
 	ocl_check(err, "set path tracer arg %d", i-1);
 	err = clSetKernelArg(pathtracer_k, i++, sizeof(cl_int)*9 , NULL);	//lSpheres
 	ocl_check(err, "set path tracer arg %d", i-1);
-	err = clSetKernelArg(pathtracer_k, i++, sizeof(cl_int)*9 , NULL);	//lPlanes
+	err = clSetKernelArg(pathtracer_k, i++, sizeof(cl_int)*9 , NULL);	//lSquares
 	ocl_check(err, "set path tracer arg %d", i-1);
 	err = clSetKernelArg(pathtracer_k, i++, sizeof(cl_Triangle)*ntriangles, NULL);	//lTriangles
 	ocl_check(err, "set path tracer arg %d", i-1);
@@ -302,7 +302,7 @@ int main(int argc, char* argv[]){
 	int img_width = 512, img_height = 512, nseedpaths = 512;
 	cl_int mutation_rounds = 8;
 
-	printf("Usage: %s [img_width] [img_height] [N_seedpaths_per_light] [mutation_rounds]\nLoads data from triangles.txt, lights.txt, spheres.txt and planes.txt\n", argv[0]);
+	printf("Usage: %s [img_width] [img_height] [N_seedpaths_per_light] [mutation_rounds]\nLoads data from triangles.txt, lights.txt, spheres.txt and squares.txt\n", argv[0]);
 
 	if(argc > 1){
 		img_width = atoi(argv[1]);
@@ -382,11 +382,11 @@ int main(int argc, char* argv[]){
 
 	//Geometries
 	cl_int * Spheres = malloc(sizeof(cl_int)*9);
-	cl_int * Planes = malloc(sizeof(cl_int)*9);
+	cl_int * Squares = malloc(sizeof(cl_int)*9);
 	cl_Triangle * Triangles = malloc(sizeof(cl_float4)*3*MAX_TRIANGLES);
 
 	parseArrayFromFile("spheres.txt", Spheres);
-	parseArrayFromFile("planes.txt", Planes);
+	parseArrayFromFile("squares.txt", Squares);
 
 	cl_int ntriangles = parseTrianglesFromFile("triangles.txt", Triangles);
 	if(ntriangles > lws_max){
@@ -406,11 +406,11 @@ int main(int argc, char* argv[]){
 		&err);
 	ocl_check(err, "create buffer d_Spheres");
 
-	cl_mem d_Planes = clCreateBuffer(ctx,
+	cl_mem d_Squares = clCreateBuffer(ctx,
 		CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
-		sizeof(cl_int)*9, Planes,
+		sizeof(cl_int)*9, Squares,
 		&err);
-	ocl_check(err, "create buffer d_Planes");
+	ocl_check(err, "create buffer d_Squares");
 
 	cl_mem d_Triangles = clCreateBuffer(ctx,
 		CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
@@ -437,12 +437,12 @@ int main(int argc, char* argv[]){
 		&err);
 	ocl_check(err, "create buffer d_virtual_lights");
 
-	cl_event lighttracer_evt = lightTracer(lighttracer_k, que, d_Spheres, d_Planes, d_Triangles, ntriangles, d_scenelights, nlights, d_virtual_lights, nseedpaths, seeds);
+	cl_event lighttracer_evt = lightTracer(lighttracer_k, que, d_Spheres, d_Squares, d_Triangles, ntriangles, d_scenelights, nlights, d_virtual_lights, nseedpaths, seeds);
 
-	cl_event metrolighttracer_evt = MetropolisLightTracer(metrolighttracer_k, que, d_Spheres, d_Planes, d_Triangles, ntriangles, d_scenelights, nlights, d_seedpaths, nseedpaths, d_virtual_lights, seeds, mutation_rounds);
+	cl_event metrolighttracer_evt = MetropolisLightTracer(metrolighttracer_k, que, d_Spheres, d_Squares, d_Triangles, ntriangles, d_scenelights, nlights, d_seedpaths, nseedpaths, d_virtual_lights, seeds, mutation_rounds);
 
 	cl_event pathtracer_evt = pathTracer(pathtracer_k, que, d_render, 
-	d_Spheres, d_Planes, d_Triangles, ntriangles, 
+	d_Spheres, d_Squares, d_Triangles, ntriangles, 
 	d_virtual_lights, nseedpaths*4, d_scenelights, nlights, seeds, 
 	cam_forward, cam_up, cam_right, eye_offset, 
 	resultInfo.width, resultInfo.height, lighttracer_evt);
@@ -488,7 +488,7 @@ int main(int argc, char* argv[]){
 	clReleaseMemObject(d_render);
 
 	free(Spheres);
-	free(Planes);
+	free(Squares);
 	free(Triangles);
 	free(scenelights);
 

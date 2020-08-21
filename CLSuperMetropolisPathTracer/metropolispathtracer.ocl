@@ -54,7 +54,7 @@ inline float4 Normalize(float4 x){
 }
 
 inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal, 
-	local int * restrict Spheres, local int * restrict Planes, 
+	local int * restrict Spheres, local int * restrict Squares, 
 	local Triangle * restrict Triangles, int ntriangles){
 
 	int m = 0;	//default material
@@ -76,10 +76,10 @@ inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal,
 		m = 1;
 	}
 	
-	//Check for plane intersection
+	//Check for square intersection
 	for(int k = 19; k--;){
 		for(int j = 9; j--;){
-			if(Planes[j] & 1 << k){
+			if(Squares[j] & 1 << k){
 				rayDist = (4+j-origin.z)/direction.z;
 				intersection = origin + direction * rayDist;
 				if(rayDist < *t && (fabs(k-intersection.x)<1) && fabs(intersection.y)<1){
@@ -155,26 +155,26 @@ inline float4 GetRandomDirection(mwc64xvec2_state_t rng){
 }
 
 inline int AddRandomVertex(float4 origin, float4 * vertexToAdd, Path * path, 
-	local int * restrict lSpheres, local int * restrict lPlanes, 
+	local int * restrict lSpheres, local int * restrict lSquares, 
 	local Triangle * restrict lTriangles, int ntriangles, mwc64xvec2_state_t rng){
 	const float4 direction = GetRandomDirection(rng);
 	float4 normal;
 	float t = 1e9;	//default distance
-	if(TraceRay(origin, direction, &t, &normal, lSpheres, lPlanes, lTriangles, ntriangles)){
+	if(TraceRay(origin, direction, &t, &normal, lSpheres, lSquares, lTriangles, ntriangles)){
 		*vertexToAdd = origin + direction * t;
 		path->length += 1;
 		return 1;
 	}
-	return -1;
+	return 0;
 }
 
-inline Path GetRandomPath(float4 origin, local int * restrict lSpheres, local int * restrict lPlanes, 
+inline Path GetRandomPath(float4 origin, local int * restrict lSpheres, local int * restrict lSquares, 
 	local Triangle * restrict lTriangles, int ntriangles, mwc64xvec2_state_t rng){
 	Path curr_path;
 	curr_path.length = 0;	//Default path length
 	float4 curr_origin = origin;
 	for(int i=0; i<4; ++i){
-		if(!AddRandomVertex(curr_origin, &(curr_path.v[i]), &curr_path, lSpheres, lPlanes, lTriangles, ntriangles, rng)) break;
+		if(!AddRandomVertex(curr_origin, &(curr_path.v[i]), &curr_path, lSpheres, lSquares, lTriangles, ntriangles, rng)) break;
 		curr_origin = curr_path.v[i];
 	}
 	return curr_path;
@@ -223,11 +223,11 @@ inline float4 Perturbation(float4 vertex, mwc64xvec2_state_t rng){
 
 //Check if destination is the first intersection point of a ray that starts from origin in the direction Normalize(destination - origin)
 inline int VerifyIntersection(float4 origin, float4 destination, local int * restrict lSpheres, 
-	local int * restrict lPlanes, local Triangle * restrict lTriangles, int ntriangles){
+	local int * restrict lSquares, local Triangle * restrict lTriangles, int ntriangles){
 	float t;
 	float4 normal;
 	const float4 direction = Normalize(destination - origin);
-	const int m = TraceRay(origin, direction, &t, &normal, lSpheres, lPlanes, lTriangles, ntriangles);
+	const int m = TraceRay(origin, direction, &t, &normal, lSpheres, lSquares, lTriangles, ntriangles);
 	if (!m) return false;
 	else{
 		const float4 intersection = origin + direction * t;
@@ -236,9 +236,9 @@ inline int VerifyIntersection(float4 origin, float4 destination, local int * res
 }
 
 //Mutate by adding vertices and perturbation
-inline void Mutate(Path * seedpath, float4 origin, local int * lSpheres, local int * lPlanes, local Triangle * lTriangles, int ntriangles, mwc64xvec2_state_t rng){
+inline void Mutate(Path * seedpath, float4 origin, local int * lSpheres, local int * lSquares, local Triangle * lTriangles, int ntriangles, mwc64xvec2_state_t rng){
 	if(seedpath->length == 0){	//Path is empty, try and make a new one
-		*seedpath = GetRandomPath(origin, lSpheres, lPlanes, lTriangles, ntriangles, rng);
+		*seedpath = GetRandomPath(origin, lSpheres, lSquares, lTriangles, ntriangles, rng);
 		if(seedpath->length == 0) return;	//Still empty, try again next round
 	}
 	float2 randValues = MWC64XVEC2(&rng, 0.0f, 1.0f);
@@ -249,7 +249,7 @@ inline void Mutate(Path * seedpath, float4 origin, local int * lSpheres, local i
 	float4 curr_origin = origin;
 	for(int i=0; i<seedpath->length; ++i){
 		temp_path.v[i] = Perturbation(seedpath->v[i], rng);
-		if (VerifyIntersection(curr_origin, temp_path.v[i], lSpheres, lPlanes, lTriangles, ntriangles)){
+		if (VerifyIntersection(curr_origin, temp_path.v[i], lSpheres, lSquares, lTriangles, ntriangles)){
 			temp_path.length++;
 			curr_origin = temp_path.v[i];
 		} else break;
@@ -260,28 +260,28 @@ inline void Mutate(Path * seedpath, float4 origin, local int * lSpheres, local i
 	if (seedpath->length == 1){
 		//Try adding 1 (40%), 2 (20%) or 3 (10%) vertices
 		if (randValues.y > 0.3f){
-			if(!AddRandomVertex(seedpath->v[0], &(seedpath->v[1]), seedpath, lSpheres, lPlanes, lTriangles, ntriangles, rng)) return;
+			if(!AddRandomVertex(seedpath->v[0], &(seedpath->v[1]), seedpath, lSpheres, lSquares, lTriangles, ntriangles, rng)) return;
 		}
 		if (randValues.y > 0.7f){
-			if(!AddRandomVertex(seedpath->v[1], &(seedpath->v[2]), seedpath, lSpheres, lPlanes, lTriangles, ntriangles, rng)) return;
+			if(!AddRandomVertex(seedpath->v[1], &(seedpath->v[2]), seedpath, lSpheres, lSquares, lTriangles, ntriangles, rng)) return;
 		}
-		if (randValues.y > 0.9f) AddRandomVertex(seedpath->v[2], &(seedpath->v[3]), seedpath, lSpheres, lPlanes, lTriangles, ntriangles, rng);
+		if (randValues.y > 0.9f) AddRandomVertex(seedpath->v[2], &(seedpath->v[3]), seedpath, lSpheres, lSquares, lTriangles, ntriangles, rng);
 	}
 	else if (seedpath->length == 2){
 		//Try adding 1 (30%) or 2 (20%) vertices
 		if (randValues.y < 0.3f){
-			if(!AddRandomVertex(seedpath->v[1], &(seedpath->v[2]), seedpath, lSpheres, lPlanes, lTriangles, ntriangles, rng)) return;
+			if(!AddRandomVertex(seedpath->v[1], &(seedpath->v[2]), seedpath, lSpheres, lSquares, lTriangles, ntriangles, rng)) return;
 		}
-		if (randValues.y < 0.2f) AddRandomVertex(seedpath->v[2], &(seedpath->v[3]), seedpath, lSpheres, lPlanes, lTriangles, ntriangles, rng);
+		if (randValues.y < 0.2f) AddRandomVertex(seedpath->v[2], &(seedpath->v[3]), seedpath, lSpheres, lSquares, lTriangles, ntriangles, rng);
 	}
 	else if (seedpath->length == 3){
 		//Try adding 1 vertex (20%)
-		if (randValues.y < 0.2f) AddRandomVertex(seedpath->v[2], &(seedpath->v[3]), seedpath, lSpheres, lPlanes, lTriangles, ntriangles, rng);
+		if (randValues.y < 0.2f) AddRandomVertex(seedpath->v[2], &(seedpath->v[3]), seedpath, lSpheres, lSquares, lTriangles, ntriangles, rng);
 	}
 }
 
 inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * rng, 
-	local int * restrict Spheres, local int * restrict Planes, 
+	local int * restrict Spheres, local int * restrict Squares, 
 	local Triangle * restrict Triangles, int ntriangles,
 	global const float4 * restrict virtual_point_lights, int nvirtuallights, 
 	local float4 * restrict scenelights, int nlights){
@@ -300,7 +300,7 @@ inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * r
 	int material;
 	for(int maxIter = 5; maxIter--;){
 		t = 1e9;	//default distance
-		material = TraceRay(*origin, *direction, &t, &normal, Spheres, Planes, Triangles, ntriangles);
+		material = TraceRay(*origin, *direction, &t, &normal, Spheres, Squares, Triangles, ntriangles);
 		if (!material){
 			//Nothing found and the ray goes upward: Generate a sky color
 			return colorFact + (float4)(0.7f, 0.6f, 1.0f, 0) * pow(1 - (*direction).z, 4) / divFact;
@@ -323,7 +323,7 @@ inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * r
 			t = distanceFromLight;
 			//Calculate illumination factor (lambertian coefficient > 0 or in shadow)?
 			//...Or just clamp it, shadows make it painfully slow because of the number of VLPs
-			//if(lamb_f < 0 || TraceRay(intersection, light_dir, &t, &half_vec, Spheres, Planes, Triangles, ntriangles)){
+			//if(lamb_f < 0 || TraceRay(intersection, light_dir, &t, &half_vec, Spheres, Squares, Triangles, ntriangles)){
 			if(lamb_f < 0){
 				lamb_f = 0;
 			}
@@ -343,7 +343,7 @@ inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * r
 			distanceFromLight = distance(light_pos, intersection);
 			light_dir = Normalize(light_pos + (float4)(randValues,0,0) + intersection * (-1));
 			t = distanceFromLight;
-			if(TraceRay(intersection, light_dir, &t, &half_vec, Spheres, Planes, Triangles, ntriangles)){
+			if(TraceRay(intersection, light_dir, &t, &half_vec, Spheres, Squares, Triangles, ntriangles)){
 				total_illumination -= 1.0f/nlights;
 			}
 		}
@@ -376,7 +376,7 @@ inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * r
 }
 
 inline float4 SampleFromLightSource(float4 origin, float4 direction, 
-	local int * restrict Spheres, local int * restrict Planes, 
+	local int * restrict Spheres, local int * restrict Squares, 
 	local Triangle * restrict Triangles, int ntriangles,
 	float light_intensity, int total_paths){
 
@@ -386,7 +386,7 @@ inline float4 SampleFromLightSource(float4 origin, float4 direction,
 	float distanceFromLight, lamb_f;
 
 	t = 1e9;	//default distance
-	int material = TraceRay(origin, direction, &t, &normal, Spheres, Planes, Triangles, ntriangles);
+	int material = TraceRay(origin, direction, &t, &normal, Spheres, Squares, Triangles, ntriangles);
 	if (!material){
 		//No surface or floor found: return dummy light source
 		return (float4)(0, 0, 0, 0);
@@ -426,11 +426,11 @@ inline float4 SampleFromLightSource(float4 origin, float4 direction,
 }
 
 //Compute random paths through the scene as seeds for the second phase
-kernel void lightTracer(global const int * restrict Spheres, global const int * restrict Planes, 
+kernel void lightTracer(global const int * restrict Spheres, global const int * restrict Squares, 
 	global const Triangle * restrict Triangles, int ntriangles, 
 	global const float4 * restrict scenelights, int nlights,
 	global Path * restrict seedpaths, uint4 seeds,
-	local int * restrict lSpheres, local int * restrict lPlanes, 
+	local int * restrict lSpheres, local int * restrict lSquares, 
 	local Triangle* restrict lTriangles, local float4 * restrict lScenelights){
 	int gi = get_global_id(0);
 	int gws = get_global_size(0);
@@ -444,7 +444,7 @@ kernel void lightTracer(global const int * restrict Spheres, global const int * 
 
 	if (li < 9){
 		lSpheres[li]=Spheres[li];
-		lPlanes[li]=Planes[li];
+		lSquares[li]=Squares[li];
 	}
 
 	if(li < nlights){
@@ -459,17 +459,17 @@ kernel void lightTracer(global const int * restrict Spheres, global const int * 
 	for(int l=0; l<nlights; ++l){
 		current_light = lScenelights[l];
 		origin = (float4)(current_light.s012, 0);	//Get position in 3D space of current light
-		seedpaths[gi+l*gws] = GetRandomPath(origin, lSpheres, lPlanes, lTriangles, ntriangles, rng);
+		seedpaths[gi+l*gws] = GetRandomPath(origin, lSpheres, lSquares, lTriangles, ntriangles, rng);
 	}
 }
 
 //Uses seed paths from lightTracer to find more light paths
-kernel void MetropolisLightTracer(global const int * restrict Spheres, global const int * restrict Planes, 
+kernel void MetropolisLightTracer(global const int * restrict Spheres, global const int * restrict Squares, 
 	global const Triangle * restrict Triangles, int ntriangles, 
 	global const float4 * restrict scenelights, int nlights,
 	global Path * restrict seedpaths, global float16 * restrict virtual_point_lights, 
 	uint4 seeds, int mutation_rounds,
-	local int * restrict lSpheres, local int * restrict lPlanes, 
+	local int * restrict lSpheres, local int * restrict lSquares, 
 	local Triangle* restrict lTriangles, local float4 * restrict lScenelights){
 	int gi = get_global_id(0);
 	int gws = get_global_size(0);
@@ -488,7 +488,7 @@ kernel void MetropolisLightTracer(global const int * restrict Spheres, global co
 
 	if (li < 9){
 		lSpheres[li]=Spheres[li];
-		lPlanes[li]=Planes[li];
+		lSquares[li]=Squares[li];
 	}
 
 	if(li < nlights){
@@ -513,12 +513,12 @@ kernel void MetropolisLightTracer(global const int * restrict Spheres, global co
 		curr_vlp[3] = (float4)(0);
 
 		for(int m = 0; m < mutation_rounds; ++m){
-			Mutate(&seedpath, origin, lSpheres, lPlanes, lTriangles, ntriangles, rng);
+			Mutate(&seedpath, origin, lSpheres, lSquares, lTriangles, ntriangles, rng);
 		}
 		//Get a light sample from each vertex
 		for(int i=0; i<seedpath.length; ++i){
 			direction = Normalize(seedpath.v[i] - origin);
-			curr_vlp[i] = SampleFromLightSource(origin, direction, lSpheres, lPlanes, lTriangles, ntriangles, light_intensity, total_paths);
+			curr_vlp[i] = SampleFromLightSource(origin, direction, lSpheres, lSquares, lTriangles, ntriangles, light_intensity/(1 << i), total_paths);
 			if (curr_vlp[i].w == 0) break;
 			origin = seedpath.v[i];
 		}
@@ -527,11 +527,11 @@ kernel void MetropolisLightTracer(global const int * restrict Spheres, global co
 }
 
 kernel void pathTracer(global uchar4 * restrict img, global const int * restrict Spheres, 
-	global const int * restrict Planes, global const Triangle * restrict Triangles, int ntriangles, 
+	global const int * restrict Squares, global const Triangle * restrict Triangles, int ntriangles, 
 	global const float4 * restrict virtual_point_lights, int nvlp,
 	global const float4 * restrict scenelights, int nlights,
 	float4 cam_forward, float4 cam_up, float4 cam_right, float4 eye_offset, uint4 seeds,
-	local int * restrict lSpheres, local int * restrict lPlanes, 
+	local int * restrict lSpheres, local int * restrict lSquares, 
 	local Triangle* restrict lTriangles, local float4 * restrict lScenelights){
 	float4 color = (float4)(13, 13, 13, 0);
 	int i = get_global_id(0);
@@ -544,7 +544,7 @@ kernel void pathTracer(global uchar4 * restrict img, global const int * restrict
 
 	if (li < 9){
 		lSpheres[li]=Spheres[li];
-		lPlanes[li]=Planes[li];
+		lSquares[li]=Squares[li];
 	}
 
 	if(li < ntriangles){
@@ -560,7 +560,7 @@ kernel void pathTracer(global uchar4 * restrict img, global const int * restrict
 		delta = cam_up * ((randValues.x - 0.5f) * 99) + cam_right * ((randValues.y - 0.5f) * 99);
 		origin = (float4)(17, 16, 8, 0) + delta;
 		direction = Normalize(delta * (-1) + (cam_up * (randValues.z + i) + cam_right * (j + randValues.w) + eye_offset) * 16);
-		color = Sample(&origin, &direction, &rng, lSpheres, lPlanes, lTriangles, ntriangles, virtual_point_lights, nvlp, lScenelights, nlights) * 3.5f + color;
+		color = Sample(&origin, &direction, &rng, lSpheres, lSquares, lTriangles, ntriangles, virtual_point_lights, nvlp, lScenelights, nlights) * 3.5f + color;
 	}
 	color.w = 255;
 	img[j*get_global_size(0)+i]=convert_uchar4(color);

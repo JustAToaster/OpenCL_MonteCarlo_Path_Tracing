@@ -46,7 +46,7 @@ inline float4 Normalize(float4 x){
 }
 
 inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal, 
-	local int * restrict Spheres, local int * restrict Planes, 
+	local int * restrict Spheres, local int * restrict Squares, 
 	local Triangle * restrict Triangles, int ntriangles){
 
 	int m = 0;	//default material
@@ -68,10 +68,10 @@ inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal,
 		m = 1;
 	}
 	
-	//Check for plane intersection
+	//Check for square intersection
 	for(int k = 19; k--;){
 		for(int j = 9; j--;){
-			if(Planes[j] & 1 << k){
+			if(Squares[j] & 1 << k){
 				rayDist = (4+j-origin.z)/direction.z;
 				intersection = origin + direction * rayDist;
 				if(rayDist < *t && (fabs(k-intersection.x)<1) && fabs(intersection.y)<1){
@@ -136,7 +136,7 @@ inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal,
 }
 
 inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * rng, 
-	local int * restrict Spheres, local int * restrict Planes, local Triangle * restrict Triangles, int ntriangles,
+	local int * restrict Spheres, local int * restrict Squares, local Triangle * restrict Triangles, int ntriangles,
 	local float4 * restrict scenelights, int nlights){
 	//Recursion vars
 	float4 colorFact = (float4)(0, 0, 0, 0);
@@ -153,7 +153,7 @@ inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * r
 	int material;
 	for(int maxIter = 5; maxIter--;){
 		t = 1e9;	//default distance
-		material = TraceRay(*origin, *direction, &t, &normal, Spheres, Planes, Triangles, ntriangles);
+		material = TraceRay(*origin, *direction, &t, &normal, Spheres, Squares, Triangles, ntriangles);
 		if (!material){
 			//Nothing found and the ray goes upward: Generate a sky color
 			return colorFact + (float4)(0.7f, 0.6f, 1.0f, 0) * pow(1 - (*direction).z, 4) / divFact;
@@ -175,7 +175,7 @@ inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * r
 
 			//Calculate illumination factor (lambertian coefficient > 0 or in shadow)?
 			//half_vec is just a dummy variable because we don't want the normal to be updated
-			if(lamb_f < 0 || TraceRay(intersection, light_dir, &t, &half_vec, Spheres, Planes, Triangles, ntriangles)){
+			if(lamb_f < 0 || TraceRay(intersection, light_dir, &t, &half_vec, Spheres, Squares, Triangles, ntriangles)){
 				lamb_f = 0;
 			}
 			else{
@@ -216,10 +216,10 @@ inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * r
 }
 
 kernel void pathTracer(global uchar4 * restrict img, global const int * restrict Spheres, 
-	global const int * restrict Planes, global const Triangle * restrict Triangles, int ntriangles, 
+	global const int * restrict Squares, global const Triangle * restrict Triangles, int ntriangles, 
 	global const float4 * restrict scenelights, int nlights, 
 	float4 cam_forward, float4 cam_up, float4 cam_right, float4 eye_offset, uint4 seeds,
-	local int * restrict lSpheres, local int * restrict lPlanes, local Triangle* restrict lTriangles, local float4 * restrict lScenelights){
+	local int * restrict lSpheres, local int * restrict lSquares, local Triangle* restrict lTriangles, local float4 * restrict lScenelights){
 	float4 color = (float4)(13, 13, 13, 0);
 	int i = get_global_id(0);
 	int j = get_global_id(1);
@@ -231,7 +231,7 @@ kernel void pathTracer(global uchar4 * restrict img, global const int * restrict
 
 	if (li < 9){
 		lSpheres[li]=Spheres[li];
-		lPlanes[li]=Planes[li];
+		lSquares[li]=Squares[li];
 	}
 
 	if(li < nlights){
@@ -247,7 +247,7 @@ kernel void pathTracer(global uchar4 * restrict img, global const int * restrict
 		delta = cam_up * ((randValues.x - 0.5f) * 99) + cam_right * ((randValues.y - 0.5f) * 99);
 		origin = (float4)(17, 16, 8, 0) + delta;	//cam_pos + delta
 		direction = Normalize(delta * (-1) + (cam_up * (randValues.z + i) + cam_right * (j + randValues.w) + eye_offset) * 16);
-		color = Sample(&origin, &direction, &rng, lSpheres, lPlanes, lTriangles, ntriangles, lScenelights, nlights) * 3.5f + color;
+		color = Sample(&origin, &direction, &rng, lSpheres, lSquares, lTriangles, ntriangles, lScenelights, nlights) * 3.5f + color;
 	}
 	color.w = 255;
 	img[j*get_global_size(0)+i]=convert_uchar4(color);
