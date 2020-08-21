@@ -8,10 +8,7 @@ typedef struct{
 //The starting point is the light source position, but we do not need to memorize it
 //The path length is defined as the number of edges
 typedef struct{
-	float4 v0;
-	float4 v1;
-	float4 v2;
-	float4 v3;
+	float4 v[4];
 	uchar length;
 } Path;
 
@@ -157,7 +154,7 @@ inline float4 GetRandomDirection(mwc64xvec2_state_t rng){
 	return (float4)(2*randValues.x*sqrt(1-randSum), 2*randValues.y*sqrt(1-randSum), 1-2*randSum, 0);
 }
 
-inline void AddRandomVertex(float4 origin, float4 * vertexToAdd, Path * path, 
+inline int AddRandomVertex(float4 origin, float4 * vertexToAdd, Path * path, 
 	local int * restrict lSpheres, local int * restrict lPlanes, 
 	local Triangle * restrict lTriangles, int ntriangles, mwc64xvec2_state_t rng){
 	const float4 direction = GetRandomDirection(rng);
@@ -166,29 +163,20 @@ inline void AddRandomVertex(float4 origin, float4 * vertexToAdd, Path * path,
 	if(TraceRay(origin, direction, &t, &normal, lSpheres, lPlanes, lTriangles, ntriangles)){
 		*vertexToAdd = origin + direction * t;
 		path->length += 1;
+		return 1;
 	}
+	return -1;
 }
 
 inline Path GetRandomPath(float4 origin, local int * restrict lSpheres, local int * restrict lPlanes, 
 	local Triangle * restrict lTriangles, int ntriangles, mwc64xvec2_state_t rng){
 	Path curr_path;
 	curr_path.length = 0;	//Default path length
-	AddRandomVertex(origin, &(curr_path.v0), &curr_path, lSpheres, lPlanes, lTriangles, ntriangles, rng);
-	if (curr_path.length == 0){
-		curr_path.v3 = curr_path.v2 = curr_path.v1 = curr_path.v0;
-		return curr_path;
+	float4 curr_origin = origin;
+	for(int i=0; i<4; ++i){
+		if(!AddRandomVertex(curr_origin, &(curr_path.v[i]), &curr_path, lSpheres, lPlanes, lTriangles, ntriangles, rng)) break;
+		curr_origin = curr_path.v[i];
 	}
-	AddRandomVertex(curr_path.v0, &(curr_path.v1), &curr_path, lSpheres, lPlanes, lTriangles, ntriangles, rng);
-	if (curr_path.length == 1){
-		curr_path.v3 = curr_path.v2 = curr_path.v1;
-		return curr_path;
-	}
-	AddRandomVertex(curr_path.v1, &(curr_path.v2), &curr_path, lSpheres, lPlanes, lTriangles, ntriangles, rng);
-	if (curr_path.length == 2){
-		curr_path.v3 = curr_path.v2;
-		return curr_path;
-	}
-	AddRandomVertex(curr_path.v2, &(curr_path.v3), &curr_path, lSpheres, lPlanes, lTriangles, ntriangles, rng);
 	return curr_path;
 }
 
@@ -257,65 +245,38 @@ inline void Mutate(Path * seedpath, float4 origin, local int * lSpheres, local i
 	const float mutation_probability = 1.0f/(seedpath->length+0.2f);
 	if(mutation_probability < randValues.x) return;
 	Path temp_path;
+	temp_path.length = 0;
+	float4 curr_origin = origin;
+	for(int i=0; i<seedpath->length; ++i){
+		temp_path.v[i] = Perturbation(seedpath->v[i], rng);
+		if (VerifyIntersection(curr_origin, temp_path.v[i], lSpheres, lPlanes, lTriangles, ntriangles)){
+			temp_path.length++;
+			curr_origin = temp_path.v[i];
+		} else break;
+	}
+	if(temp_path.length == seedpath->length){
+		*seedpath = temp_path;
+	}
 	if (seedpath->length == 1){
-		//Try perturbation (100%), try adding 1 (40%), 2 (20%) or 3 (10%) vertices
-		temp_path.v0 = Perturbation(seedpath->v0, rng);
-		if (VerifyIntersection(origin, temp_path.v0, lSpheres, lPlanes, lTriangles, ntriangles)){
-			seedpath->v0 = temp_path.v0;
-		}
+		//Try adding 1 (40%), 2 (20%) or 3 (10%) vertices
 		if (randValues.y > 0.3f){
-			AddRandomVertex(seedpath->v0, &(seedpath->v1), seedpath, lSpheres, lPlanes, lTriangles, ntriangles, rng);
-			if (seedpath->length == 1) return;
+			if(!AddRandomVertex(seedpath->v[0], &(seedpath->v[1]), seedpath, lSpheres, lPlanes, lTriangles, ntriangles, rng)) return;
 		}
 		if (randValues.y > 0.7f){
-			AddRandomVertex(seedpath->v1, &(seedpath->v2), seedpath, lSpheres, lPlanes, lTriangles, ntriangles, rng);
-			if (seedpath->length == 2) return;
+			if(!AddRandomVertex(seedpath->v[1], &(seedpath->v[2]), seedpath, lSpheres, lPlanes, lTriangles, ntriangles, rng)) return;
 		}
-		if (randValues.y > 0.9f) AddRandomVertex(seedpath->v2, &(seedpath->v3), seedpath, lSpheres, lPlanes, lTriangles, ntriangles, rng);
+		if (randValues.y > 0.9f) AddRandomVertex(seedpath->v[2], &(seedpath->v[3]), seedpath, lSpheres, lPlanes, lTriangles, ntriangles, rng);
 	}
 	else if (seedpath->length == 2){
-		//Try perturbation (100%), try adding 1 (30%) or 2 (20%) vertices
-		temp_path.v0 = Perturbation(seedpath->v0, rng);
-		temp_path.v1 = Perturbation(seedpath->v1, rng);
-		if (VerifyIntersection(origin, temp_path.v0, lSpheres, lPlanes, lTriangles, ntriangles) 
-		&& VerifyIntersection(temp_path.v0, temp_path.v1, lSpheres, lPlanes, lTriangles, ntriangles)){
-			seedpath->v0 = temp_path.v0;
-			seedpath->v1 = temp_path.v1;
-		}
+		//Try adding 1 (30%) or 2 (20%) vertices
 		if (randValues.y < 0.3f){
-			AddRandomVertex(seedpath->v1, &(seedpath->v2), seedpath, lSpheres, lPlanes, lTriangles, ntriangles, rng);
-			if (seedpath->length == 2) return;
+			if(!AddRandomVertex(seedpath->v[1], &(seedpath->v[2]), seedpath, lSpheres, lPlanes, lTriangles, ntriangles, rng)) return;
 		}
-		if (randValues.y < 0.2f) AddRandomVertex(seedpath->v2, &(seedpath->v3), seedpath, lSpheres, lPlanes, lTriangles, ntriangles, rng);
+		if (randValues.y < 0.2f) AddRandomVertex(seedpath->v[2], &(seedpath->v[3]), seedpath, lSpheres, lPlanes, lTriangles, ntriangles, rng);
 	}
 	else if (seedpath->length == 3){
-		//Try perturbation (100%), try adding 1 vertex (20%)
-		temp_path.v0 = Perturbation(seedpath->v0, rng);
-		temp_path.v1 = Perturbation(seedpath->v1, rng);
-		temp_path.v2 = Perturbation(seedpath->v2, rng);
-		if (VerifyIntersection(origin, temp_path.v0, lSpheres, lPlanes, lTriangles, ntriangles) 
-		&& VerifyIntersection(temp_path.v0, temp_path.v1, lSpheres, lPlanes, lTriangles, ntriangles)
-		&& VerifyIntersection(temp_path.v1, temp_path.v2, lSpheres, lPlanes, lTriangles, ntriangles)){
-			seedpath->v0 = temp_path.v0;
-			seedpath->v1 = temp_path.v1;
-			seedpath->v2 = temp_path.v2;
-		}
-		if (randValues.y < 0.2f) AddRandomVertex(seedpath->v2, &(seedpath->v3), seedpath, lSpheres, lPlanes, lTriangles, ntriangles, rng);
-	}
-	else if (seedpath->length == 4){
-		//Try perturbation
-		temp_path.v0 = Perturbation(seedpath->v0, rng);
-		temp_path.v1 = Perturbation(seedpath->v1, rng);
-		temp_path.v2 = Perturbation(seedpath->v2, rng);
-		temp_path.v3 = Perturbation(seedpath->v3, rng);
-
-		if (VerifyIntersection(origin, temp_path.v0, lSpheres, lPlanes, lTriangles, ntriangles) 
-		&& VerifyIntersection(temp_path.v0, temp_path.v1, lSpheres, lPlanes, lTriangles, ntriangles)
-		&& VerifyIntersection(temp_path.v1, temp_path.v2, lSpheres, lPlanes, lTriangles, ntriangles)
-		&& VerifyIntersection(temp_path.v2, temp_path.v3, lSpheres, lPlanes, lTriangles, ntriangles)){
-			*seedpath = temp_path;
-		}
-		
+		//Try adding 1 vertex (20%)
+		if (randValues.y < 0.2f) AddRandomVertex(seedpath->v[2], &(seedpath->v[3]), seedpath, lSpheres, lPlanes, lTriangles, ntriangles, rng);
 	}
 }
 
@@ -523,7 +484,7 @@ kernel void MetropolisLightTracer(global const int * restrict Spheres, global co
 	float4 origin, direction;
 
 	Path seedpath;
-	float4 curr_vlp0, curr_vlp1, curr_vlp2, curr_vlp3;
+	float4 curr_vlp[4];
 
 	if (li < 9){
 		lSpheres[li]=Spheres[li];
@@ -538,7 +499,7 @@ kernel void MetropolisLightTracer(global const int * restrict Spheres, global co
 		lTriangles[li]=Triangles[li];
 	}
 	barrier(CLK_LOCAL_MEM_FENCE);
-	//for each light, create get the sample VLPs from the mutated seed path
+	//for each light, create the sample VLPs from the mutated seed path
 	for(int l=0; l<nlights; ++l){
 		current_light = lScenelights[l];
 		origin = (float4)(current_light.s012, 0);	//Get position in 3D space of current light
@@ -546,50 +507,22 @@ kernel void MetropolisLightTracer(global const int * restrict Spheres, global co
 		seedpath = seedpaths[gi+l*gws];
 
 		//Initialize lights in case the path gets cut off
-		curr_vlp0 = (float4)(0);
-		curr_vlp1 = (float4)(0);
-		curr_vlp2 = (float4)(0);
-		curr_vlp3 = (float4)(0);
+		curr_vlp[0] = (float4)(0);
+		curr_vlp[1] = (float4)(0);
+		curr_vlp[2] = (float4)(0);
+		curr_vlp[3] = (float4)(0);
 
 		for(int m = 0; m < mutation_rounds; ++m){
 			Mutate(&seedpath, origin, lSpheres, lPlanes, lTriangles, ntriangles, rng);
 		}
-		if(seedpath.length == 0){	//Still empty after all the attempts, give up: do not want to force it (in case the scene is empty)
-			virtual_point_lights[gi+l*gws] = (float16)(curr_vlp0, curr_vlp1, curr_vlp2, curr_vlp3);
-			continue;
+		//Get a light sample from each vertex
+		for(int i=0; i<seedpath.length; ++i){
+			direction = Normalize(seedpath.v[i] - origin);
+			curr_vlp[i] = SampleFromLightSource(origin, direction, lSpheres, lPlanes, lTriangles, ntriangles, light_intensity, total_paths);
+			if (curr_vlp[i].w == 0) break;
+			origin = seedpath.v[i];
 		}
-
-		//First vertex of the light path (after the light origin)
-		direction = Normalize(seedpath.v0 - origin);
-		curr_vlp0 = SampleFromLightSource(origin, direction, lSpheres, lPlanes, lTriangles, ntriangles, light_intensity, total_paths);
-		if(curr_vlp0.w == 0){	//Sky was hit, stop the path here
-			virtual_point_lights[gi+l*gws] = (float16)(curr_vlp0, curr_vlp1, curr_vlp2, curr_vlp3);
-			continue;
-		}
-
-		//Second vertex of the light path
-		origin = (float4)(curr_vlp0.s012, 0);	//Intersection point of the previous ray
-		direction = Normalize(seedpath.v1 - seedpath.v0);
-		curr_vlp1 = SampleFromLightSource(origin, direction, lSpheres, lPlanes, lTriangles, ntriangles, light_intensity/2, total_paths);	//Decrease light intensity because it is bouncing
-		if(curr_vlp1.w == 0){	//Sky was hit, stop the path here
-			virtual_point_lights[gi+l*gws] = (float16)(curr_vlp0, curr_vlp1, curr_vlp2, curr_vlp3);
-			continue;
-		}
-
-		//Third vertex of the light path
-		origin = (float4)(curr_vlp1.s012, 0);	//Intersection point of the previous ray
-		direction = Normalize(seedpath.v2 - seedpath.v1);
-		curr_vlp2 = SampleFromLightSource(origin, direction, lSpheres, lPlanes, lTriangles, ntriangles, light_intensity/4, total_paths);	//Decrease light intensity because it is bouncing
-		if(curr_vlp2.w == 0){	//Sky was hit, stop the path here
-			virtual_point_lights[gi+l*gws] = (float16)(curr_vlp0, curr_vlp1, curr_vlp2, curr_vlp3);
-			continue;
-		}
-
-		//Fourth vertex of the light path
-		origin = (float4)(curr_vlp2.s012, 0);	//Intersection point of the previous ray
-		direction = Normalize(seedpath.v3 - seedpath.v2);
-		curr_vlp3 = SampleFromLightSource(origin, direction, lSpheres, lPlanes, lTriangles, ntriangles, light_intensity/8, total_paths);	//Decrease light intensity because it is bouncing
-		virtual_point_lights[gi+l*gws] = (float16)(curr_vlp0, curr_vlp1, curr_vlp2, curr_vlp3);
+		virtual_point_lights[gi+l*gws] = *((float16*)curr_vlp);
 	}
 }
 
