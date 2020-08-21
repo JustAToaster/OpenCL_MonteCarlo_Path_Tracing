@@ -4,6 +4,11 @@ typedef struct{
 	float4 v2;
 } Triangle;
 
+typedef struct{
+	float4 vmin;
+	float4 vmax;
+} Box;
+
 //MWC64x, an RNG made by David B. Tomas, with custom seeding
 //Source: http://cas.ee.ic.ac.uk/people/dt10/research/rngs-gpu-mwc64x.html
 
@@ -45,8 +50,65 @@ inline float4 Normalize(float4 x){
 	return ((1/sqrt(dot(x, x))) * x);
 }
 
+inline void swap(float * x, float * y){
+	const float tmp = *x;
+	*x = *y;
+	*y = tmp;
+}
+
+inline int BoxIntersect2(float4 origin, float4 direction, const Box box){ 
+    float tmin = (box.vmin.x - origin.x) / direction.x; 
+    float tmax = (box.vmax.x - origin.x) / direction.x; 
+ 
+    if (tmin > tmax) swap(&tmin, &tmax); 
+ 
+    float tymin = (box.vmin.y - origin.y) / direction.y; 
+    float tymax = (box.vmax.y - origin.y) / direction.y; 
+ 
+    if (tymin > tymax) swap(&tymin, &tymax); 
+ 
+    if ((tmin > tymax) || (tymin > tmax)) 
+        return false; 
+ 
+    if (tymin > tmin) 
+        tmin = tymin; 
+ 
+    if (tymax < tmax) 
+        tmax = tymax; 
+ 
+    float tzmin = (box.vmin.z - origin.z) / direction.z; 
+    float tzmax = (box.vmax.z - origin.z) / direction.z; 
+ 
+    if (tzmin > tzmax) swap(&tzmin, &tzmax); 
+ 
+    if ((tmin > tzmax) || (tzmin > tmax)) 
+        return 0; 
+ 
+    if (tzmin > tmin) 
+        tmin = tzmin; 
+ 
+    if (tzmax < tmax) 
+        tmax = tzmax; 
+ 
+    return 1; 
+}
+
+inline int BoxIntersect(const float4 origin, const float4 direction, const Box box) {
+	const float4 invRayDir = 1/direction;
+	const float4 l1 = (box.vmin - origin) * invRayDir;
+	const float4 l2 = (box.vmax - origin) * invRayDir;
+	const float4 tNear = fmin(l1, l2);
+	const float4 tFar = fmax(l1, l2);
+
+	const float t0 = fmax(fmax(tNear.x, tNear.y), fmax(tNear.x, tNear.z));
+    const float t1 = fmin(fmin(tFar.x, tFar.y), fmin(tFar.x, tFar.z));
+
+	return (t1 > t0);
+}
+
 inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal, 
-	local int * Spheres, local int * Planes, local Triangle * Triangles, int ntriangles){
+	local int * restrict Spheres, local int * restrict Squares, 
+	global const Triangle * restrict Triangles, int ntriangles, const Box trianglesBox){
 
 	int m = 0;	//default material
 	float rayDist;
@@ -67,10 +129,10 @@ inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal,
 		m = 1;
 	}
 	
-	//Check for plane intersection
+	//Check for square intersection
 	for(int k = 19; k--;){
 		for(int j = 9; j--;){
-			if(Planes[j] & 1 << k){
+			if(Squares[j] & 1 << k){
 				rayDist = (4+j-origin.z)/direction.z;
 				intersection = origin + direction * rayDist;
 				if(rayDist < *t && (fabs(k-intersection.x)<1) && fabs(intersection.y)<1){
@@ -104,30 +166,32 @@ inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal,
 			}
 		}
 	}
-	
-	//Check for triangle intersection (Moller-Trumbore)
-	for(int i=0; i<ntriangles; i++){
-		curr_triangle = Triangles[i];
-		edge0 = curr_triangle.v1 - curr_triangle.v0;
-		edge2 = curr_triangle.v2 - curr_triangle.v0;
+	//Check triangles only if ray hits the box
+	if(BoxIntersect(origin, direction, trianglesBox)){
+		//Check for triangle intersection (Moller-Trumbore)
+		for(int i=0; i<ntriangles; i++){
+			curr_triangle = Triangles[i];
+			edge0 = curr_triangle.v1 - curr_triangle.v0;
+			edge2 = curr_triangle.v2 - curr_triangle.v0;
 
-		pvec = cross(direction, edge2);
-		det = dot(edge0, pvec);
-		if(fabs(det) < 0.01f)	continue;
-		invDet = 1/det;
-		tvec = origin - curr_triangle.v0;
-		barycentric_u = dot(tvec, pvec) * invDet;
-		if(barycentric_u < 0 || barycentric_u > 1) continue;
-		qvec = cross(tvec, edge0);
-		barycentric_v = dot(direction, qvec) * invDet;
-		if (barycentric_v < 0 || barycentric_u+barycentric_v > 1) continue;
-		rayDist = dot(edge2, qvec) * invDet;
+			pvec = cross(direction, edge2);
+			det = dot(edge0, pvec);
+			if(fabs(det) < 0.01f)	continue;
+			invDet = 1/det;
+			tvec = origin - curr_triangle.v0;
+			barycentric_u = dot(tvec, pvec) * invDet;
+			if(barycentric_u < 0 || barycentric_u > 1) continue;
+			qvec = cross(tvec, edge0);
+			barycentric_v = dot(direction, qvec) * invDet;
+			if (barycentric_v < 0 || barycentric_u+barycentric_v > 1) continue;
+			rayDist = dot(edge2, qvec) * invDet;
 
-		//Ray hits the triangle
-		if(rayDist < *t){
-			*t = rayDist;
-			*normal = Normalize(cross(edge0, edge2));
-			m = 4;
+			//Ray hits the triangle
+			if(rayDist < *t){
+				*t = rayDist;
+				*normal = Normalize(cross(edge0, edge2));
+				m = 4;
+			}
 		}
 	}
 	
@@ -135,8 +199,10 @@ inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal,
 }
 
 inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * rng, 
-	local int * Spheres, local int * Planes, local Triangle * Triangles, int ntriangles,
-	local float4 * scenelights, int nlights){
+	local int * restrict Spheres, local int * restrict Squares, 
+	global const Triangle * restrict Triangles, int ntriangles,
+	const Box trianglesBox,
+	local float4 * restrict scenelights, int nlights){
 	//Recursion vars
 	float4 colorFact = (float4)(0, 0, 0, 0);
 	int divFact = 1;
@@ -152,7 +218,7 @@ inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * r
 	int material;
 	for(int maxIter = 5; maxIter--;){
 		t = 1e9;	//default distance
-		material = TraceRay(*origin, *direction, &t, &normal, Spheres, Planes, Triangles, ntriangles);
+		material = TraceRay(*origin, *direction, &t, &normal, Spheres, Squares, Triangles, ntriangles, trianglesBox);
 		if (!material){
 			//Nothing found and the ray goes upward: Generate a sky color
 			return colorFact + (float4)(0.7f, 0.6f, 1.0f, 0) * pow(1 - (*direction).z, 4) / divFact;
@@ -174,7 +240,7 @@ inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * r
 
 			//Calculate illumination factor (lambertian coefficient > 0 or in shadow)?
 			//half_vec is just a dummy variable because we don't want the normal to be updated
-			if(lamb_f < 0 || TraceRay(intersection, light_dir, &t, &half_vec, Spheres, Planes, Triangles, ntriangles)){
+			if(lamb_f < 0 || TraceRay(intersection, light_dir, &t, &half_vec, Spheres, Squares, Triangles, ntriangles, trianglesBox)){
 				lamb_f = 0;
 			}
 			else{
@@ -214,61 +280,38 @@ inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * r
 	}
 }
 
-kernel void pathTracer(global float4 * img, global int * Spheres, global int * Planes, 
-	global Triangle * Triangles, int ntriangles, global float4 * scenelights, int nlights,
+kernel void pathTracer(global uchar4 * restrict img, global const int * restrict Spheres, 
+	global const int * restrict Squares, global const Triangle * restrict Triangles, int ntriangles,
+	const Box trianglesBox, 
+	global const float4 * restrict scenelights, int nlights, 
 	float4 cam_forward, float4 cam_up, float4 cam_right, float4 eye_offset, uint4 seeds,
-	local int * lSpheres, local int * lPlanes, local Triangle* lTriangles, local float4 * lScenelights){
-	const int i = get_global_id(0);
-	const int j = get_global_id(1);
-	const int x = i >> 3;
-	const int y = j >> 3;
-	const int li = get_local_id(0) + get_local_id(1) * get_local_size(0);
+	local int * restrict lSpheres, local int * restrict lSquares, local float4 * restrict lScenelights){
+	float4 color = (float4)(13, 13, 13, 0);
+	int i = get_global_id(0);
+	int j = get_global_id(1);
+	int li = get_local_id(0) + get_local_id(1) * get_local_size(0);
 	mwc64xvec2_state_t rng;
 	MWC64XVEC2_Seeding(&rng, seeds);
+	float4 randValues;
+	float4 origin, direction, delta;
 
 	if (li < 9){
 		lSpheres[li]=Spheres[li];
-		lPlanes[li]=Planes[li];
+		lSquares[li]=Squares[li];
 	}
 
 	if(li < nlights){
 		lScenelights[li]=scenelights[li];
 	}
-
-	if(li < ntriangles){
-		lTriangles[li]=Triangles[li];
-	}
 	barrier(CLK_LOCAL_MEM_FENCE);
-	/*for(int rng_skip = i & 63; rng_skip--;){	//For DoF skip a few RNG samples
-		MWC64XVEC2(0.0, 1.0f);
-	}*/
-	const float4 randValues = (float4)(MWC64XVEC2(&rng, 0.0f, 1.0f), MWC64XVEC2(&rng, 0.0f, 1.0f));
-	const float4 delta = cam_up * ((randValues.x - 0.5f) * 99) + cam_right * ((randValues.y - 0.5f) * 99);
-	float4 origin = (float4)(17, 16, 8, 0) + delta;	//cam_pos + delta
-	float4 direction = Normalize(delta * (-1) + (cam_up * (randValues.z + x) + cam_right * (y + randValues.w) + eye_offset) * 16);
-	img[j*get_global_size(0)+i] = Sample(&origin, &direction, &rng, lSpheres, lPlanes, lTriangles, ntriangles, lScenelights, nlights) * 3.5f;
+	for(int r = 64; r--;){
+		randValues = (float4)(MWC64XVEC2(&rng, 0.0f, 1.0f),MWC64XVEC2(&rng, 0.0f, 1.0f));
+		delta = cam_up * ((randValues.x - 0.5f) * 99) + cam_right * ((randValues.y - 0.5f) * 99);
+		origin = (float4)(17, 16, 8, 0) + delta;	//cam_pos + delta
+		direction = Normalize(delta * (-1) + (cam_up * (randValues.z + i) + cam_right * (j + randValues.w) + eye_offset) * 16);
+		color = Sample(&origin, &direction, &rng, lSpheres, lSquares, Triangles, ntriangles, trianglesBox, lScenelights, nlights) * 3.5f + color;
+	}
+	color.w = 255;
+	img[j*get_global_size(0)+i]=convert_uchar4(color);
 }
 
-//Reduce 64 samples into 1 pixel
-kernel void reduce4img_lmem(global const float4 * restrict in, global uchar4 * restrict out, 
-	local float4 * restrict lmem){
-	const int gi = get_global_id(1) * get_global_size(0) + get_global_id(0);
-	const int li = get_local_id(1) * get_local_size(0) + get_local_id(0);
-	float4 acc = in[gi];
-	lmem[li] = acc;
-	int working = (get_local_size(0)*get_local_size(1)) >> 1;
-	while (working > 0){
-		barrier(CLK_LOCAL_MEM_FENCE);
-		if(li < working){
-			acc += lmem[li+working];
-			lmem[li] = acc;
-		}
-		working /= 2;
-	}
-	if (li == 0){
-		acc += (float4)(13, 13, 13, 0);
-		acc.w = 255;
-		out[get_group_id(1)*get_num_groups(0)+get_group_id(0)] = convert_uchar4(acc);
-	}
-	barrier(CLK_LOCAL_MEM_FENCE);
-}
