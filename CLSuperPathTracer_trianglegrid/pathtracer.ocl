@@ -1,3 +1,5 @@
+#define MAX_NELS_PER_CELL 31 //Should be a power of two minus one for better alignment
+
 typedef struct{
 	float4 v0;
 	float4 v1;
@@ -8,6 +10,11 @@ typedef struct{
 	float4 vmin;
 	float4 vmax;
 } Box;
+
+typedef struct{
+	ushort nels;
+	ushort elem_index[MAX_NELS_PER_CELL];
+} Cell;
 
 //MWC64x, an RNG made by David B. Tomas, with custom seeding
 //Source: http://cas.ee.ic.ac.uk/people/dt10/research/rngs-gpu-mwc64x.html
@@ -50,65 +57,24 @@ inline float4 Normalize(float4 x){
 	return ((1/sqrt(dot(x, x))) * x);
 }
 
-inline void swap(float * x, float * y){
-	const float tmp = *x;
-	*x = *y;
-	*y = tmp;
-}
-
-inline int BoxIntersect2(float4 origin, float4 direction, const Box box){ 
-    float tmin = (box.vmin.x - origin.x) / direction.x; 
-    float tmax = (box.vmax.x - origin.x) / direction.x; 
- 
-    if (tmin > tmax) swap(&tmin, &tmax); 
- 
-    float tymin = (box.vmin.y - origin.y) / direction.y; 
-    float tymax = (box.vmax.y - origin.y) / direction.y; 
- 
-    if (tymin > tymax) swap(&tymin, &tymax); 
- 
-    if ((tmin > tymax) || (tymin > tmax)) 
-        return false; 
- 
-    if (tymin > tmin) 
-        tmin = tymin; 
- 
-    if (tymax < tmax) 
-        tmax = tymax; 
- 
-    float tzmin = (box.vmin.z - origin.z) / direction.z; 
-    float tzmax = (box.vmax.z - origin.z) / direction.z; 
- 
-    if (tzmin > tzmax) swap(&tzmin, &tzmax); 
- 
-    if ((tmin > tzmax) || (tzmin > tmax)) 
-        return 0; 
- 
-    if (tzmin > tmin) 
-        tmin = tzmin; 
- 
-    if (tzmax < tmax) 
-        tmax = tzmax; 
- 
-    return 1; 
-}
-
 inline int BoxIntersect(const float4 origin, const float4 direction, const Box box) {
 	const float4 invRayDir = 1/direction;
-	const float4 l1 = (box.vmin - origin) * invRayDir;
-	const float4 l2 = (box.vmax - origin) * invRayDir;
-	const float4 tNear = fmin(l1, l2);
-	const float4 tFar = fmax(l1, l2);
+	const float4 t1 = (box.vmin - origin) * invRayDir;
+	const float4 t2 = (box.vmax - origin) * invRayDir;
+	const float4 tNear = fmin(t1, t2);
+	const float4 tFar = fmax(t1, t2);
 
-	const float t0 = fmax(fmax(tNear.x, tNear.y), fmax(tNear.x, tNear.z));
-    const float t1 = fmin(fmin(tFar.x, tFar.y), fmin(tFar.x, tFar.z));
+	const float l0 = fmax(fmax(tNear.x, tNear.y), fmax(tNear.x, tNear.z));
+    const float l1 = fmin(fmin(tFar.x, tFar.y), fmin(tFar.x, tFar.z));
 
-	return (t1 > t0);
+	return (l1 > l0);
 }
 
 inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal, 
 	local int * restrict Spheres, local int * restrict Squares, 
-	global const Triangle * restrict Triangles, int ntriangles, const Box trianglesBox){
+	global const Triangle * restrict Triangles, int ntriangles, const Box trianglesBox,
+	global const Cell * restrict TriangleGrid, const int4 grid_res,
+	const float4 cell_size){
 
 	int m = 0;	//default material
 	float rayDist;
@@ -201,8 +167,8 @@ inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal,
 inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * rng, 
 	local int * restrict Spheres, local int * restrict Squares, 
 	global const Triangle * restrict Triangles, int ntriangles,
-	const Box trianglesBox,
-	local float4 * restrict scenelights, int nlights){
+	const Box trianglesBox, global const Cell * restrict TriangleGrid, const int4 grid_res,
+	const float4 cell_size, local float4 * restrict scenelights, int nlights){
 	//Recursion vars
 	float4 colorFact = (float4)(0, 0, 0, 0);
 	int divFact = 1;
@@ -218,7 +184,7 @@ inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * r
 	int material;
 	for(int maxIter = 5; maxIter--;){
 		t = 1e9;	//default distance
-		material = TraceRay(*origin, *direction, &t, &normal, Spheres, Squares, Triangles, ntriangles, trianglesBox);
+		material = TraceRay(*origin, *direction, &t, &normal, Spheres, Squares, Triangles, ntriangles, trianglesBox, TriangleGrid, grid_res, cell_size);
 		if (!material){
 			//Nothing found and the ray goes upward: Generate a sky color
 			return colorFact + (float4)(0.7f, 0.6f, 1.0f, 0) * pow(1 - (*direction).z, 4) / divFact;
@@ -240,7 +206,7 @@ inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * r
 
 			//Calculate illumination factor (lambertian coefficient > 0 or in shadow)?
 			//half_vec is just a dummy variable because we don't want the normal to be updated
-			if(lamb_f < 0 || TraceRay(intersection, light_dir, &t, &half_vec, Spheres, Squares, Triangles, ntriangles, trianglesBox)){
+			if(lamb_f < 0 || TraceRay(intersection, light_dir, &t, &half_vec, Spheres, Squares, Triangles, ntriangles, trianglesBox, TriangleGrid, grid_res, cell_size)){
 				lamb_f = 0;
 			}
 			else{
@@ -279,11 +245,61 @@ inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * r
 		}
 	}
 }
+/*
+//Add a triangle to a cell only if it is not being accessed by another work item (and it fits in the cell)
+//Only works with 64 bit cells and needs the extension for 64 bit atomics
+inline void atomic_addTriangle(volatile global Cell* val, const int triangleID){
+  union {
+  Cell f;
+  ulong  i;
+  } old, new;
 
+  do
+  {
+   old.f = *val;
+   if (old.f.nels >= 3) return;
+   Cell temp = old.f;
+   temp.elem_index[temp.nels++] = triangleID;
+   new.f = temp;
+  }
+  while (atom_cmpxchg((volatile __global ulong *)val, old.i, new.i) != old.i);
+
+}
+
+kernel void initTrianglesGrid(global Cell * restrict TrianglesGrid, global const Triangle * restrict Triangles, const cl_Box trianglesBox, const int4 grid_res, const float4 cell_size){
+	const int gi = get_global_id(0);
+	global int guard = 0;
+	barrier(CLK_GLOBAL_MEM_FENCE);
+	const Triangle t = Triangles[gi];
+	Box curr_box;
+	//Compute triangle bounding box
+	curr_box.vmin = fmin(t.v0, fmin(t.v1, t.v2));
+	curr_box.vmax = fmax(t.v0, fmax(t.v1, t.v2));
+	//Convert to cell coordinates
+	const int4 min = clamp(convert_int4((curr_box.vmin-trianglesBox.vmin)/cell_size), (int4)(0), grid_res-(int4)(1, 1, 1, 0));
+	const int4 max = clamp(convert_int4((curr_box.vmax-trianglesBox.vmin)/cell_size), (int4)(0), grid_res-(int4)(1, 1, 1, 0));
+	for(int z = min.z; z <= max.z; ++z){
+		for(int y = min.y; y <= max.y; ++y){
+			for(int x = min.x; x <= max.x; ++x){
+				const int index = z*grid_res.x*grid_res.y + y*grid_res.x + x;
+				atomic_addTriangle((volatile global Cell*)(TrianglesGrid+index), gi);
+			}
+		}
+	}
+}
+
+kernel void printTrianglesGrid(const global Cell * restrict TrianglesGrid){
+	const int gi = get_global_id(0);
+	const Cell c = TrianglesGrid[gi];
+	for(int i=0; i<c.nels; ++i){
+		printf("Cell %d, triangle index %hu, nels %hu\n", gi, c.elem_index[i], c.nels);
+	}
+}
+*/
 kernel void pathTracer(global uchar4 * restrict img, global const int * restrict Spheres, 
 	global const int * restrict Squares, global const Triangle * restrict Triangles, int ntriangles,
-	const Box trianglesBox, 
-	global const float4 * restrict scenelights, int nlights, 
+	const Box trianglesBox, global const Cell * restrict TriangleGrid, const int4 grid_res,
+	const float4 cell_size, global const float4 * restrict scenelights, int nlights, 
 	float4 cam_forward, float4 cam_up, float4 cam_right, float4 eye_offset, uint4 seeds,
 	local int * restrict lSpheres, local int * restrict lSquares, local float4 * restrict lScenelights){
 	float4 color = (float4)(13, 13, 13, 0);
@@ -309,7 +325,7 @@ kernel void pathTracer(global uchar4 * restrict img, global const int * restrict
 		delta = cam_up * ((randValues.x - 0.5f) * 99) + cam_right * ((randValues.y - 0.5f) * 99);
 		origin = (float4)(17, 16, 8, 0) + delta;	//cam_pos + delta
 		direction = Normalize(delta * (-1) + (cam_up * (randValues.z + i) + cam_right * (j + randValues.w) + eye_offset) * 16);
-		color = Sample(&origin, &direction, &rng, lSpheres, lSquares, Triangles, ntriangles, trianglesBox, lScenelights, nlights) * 3.5f + color;
+		color = Sample(&origin, &direction, &rng, lSpheres, lSquares, Triangles, ntriangles, trianglesBox, TriangleGrid, grid_res, cell_size, lScenelights, nlights) * 3.5f + color;
 	}
 	color.w = 255;
 	img[j*get_global_size(0)+i]=convert_uchar4(color);
