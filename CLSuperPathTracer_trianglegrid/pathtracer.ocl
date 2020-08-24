@@ -57,7 +57,7 @@ inline float4 Normalize(float4 x){
 	return ((1/sqrt(dot(x, x))) * x);
 }
 
-inline int BoxIntersect(const float4 origin, const float4 direction, const Box box) {
+inline bool BoxIntersect(const float4 origin, const float4 direction, const Box box, float * t){
 	const float4 invRayDir = 1/direction;
 	const float4 t1 = (box.vmin - origin) * invRayDir;
 	const float4 t2 = (box.vmax - origin) * invRayDir;
@@ -66,8 +66,48 @@ inline int BoxIntersect(const float4 origin, const float4 direction, const Box b
 
 	const float l0 = fmax(fmax(tNear.x, tNear.y), fmax(tNear.x, tNear.z));
     const float l1 = fmin(fmin(tFar.x, tFar.y), fmin(tFar.x, tFar.z));
+	if (l1 < *t && l1 > l0){
+		*t = l1;
+		return true;
+	}
+	return false;
+}
 
-	return (l1 > l0);
+//Check for triangle intersection (Moller-Trumbore)
+inline bool TriangleIntersect(float4 origin, float4 direction, const Triangle curr_triangle, float * t, float4 * normal){
+
+	const float4 edge0 = curr_triangle.v1 - curr_triangle.v0;
+	const float4 edge2 = curr_triangle.v2 - curr_triangle.v0;
+
+	const float4 pvec = cross(direction, edge2);
+	const float det = dot(edge0, pvec);
+	if(fabs(det) < 0.01f)	return false;
+	const float invDet = 1/det;
+	const float4 tvec = origin - curr_triangle.v0;
+	const float barycentric_u = dot(tvec, pvec) * invDet;
+	if(barycentric_u < 0 || barycentric_u > 1) return false;
+	const float4 qvec = cross(tvec, edge0);
+	const float barycentric_v = dot(direction, qvec) * invDet;
+	if (barycentric_v < 0 || barycentric_u+barycentric_v > 1) return false;
+	const float rayDist = dot(edge2, qvec) * invDet;
+
+	//Ray hits the triangle
+	if(rayDist < *t){
+		*t = rayDist;
+		*normal = Normalize(cross(edge0, edge2));
+		return true;
+	}
+	return false;
+}
+
+inline bool CellIntersect(float4 origin, float4 direction, Cell c, global const Triangle * restrict Triangles, float * t, float4 * normal){
+	Triangle curr_triangle;
+	bool triangleFound = false;
+	for (int i=0; i<c.nels; ++i){
+		curr_triangle = Triangles[c.elem_index[i]];
+		if (TriangleIntersect(origin, direction, curr_triangle, t, normal)) triangleFound = true;
+	}
+	return triangleFound;
 }
 
 inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal, 
@@ -79,13 +119,6 @@ inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal,
 	int m = 0;	//default material
 	float rayDist;
 	float4 intersection;
-
-	//Triangle check vars
-	Triangle curr_triangle;
-	float4 edge0, edge2; 
-	//Moller-Trumbore solution
-	float4 pvec, qvec, tvec;
-	float det, invDet, barycentric_u, barycentric_v;
 
 	//Check for floor intersection
 	rayDist = -origin.z / direction.z;
@@ -133,32 +166,42 @@ inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal,
 		}
 	}
 	//Check triangles only if ray hits the box
-	if(BoxIntersect(origin, direction, trianglesBox)){
-		//Check for triangle intersection (Moller-Trumbore)
-		for(int i=0; i<ntriangles; i++){
-			curr_triangle = Triangles[i];
-			edge0 = curr_triangle.v1 - curr_triangle.v0;
-			edge2 = curr_triangle.v2 - curr_triangle.v0;
-
-			pvec = cross(direction, edge2);
-			det = dot(edge0, pvec);
-			if(fabs(det) < 0.01f)	continue;
-			invDet = 1/det;
-			tvec = origin - curr_triangle.v0;
-			barycentric_u = dot(tvec, pvec) * invDet;
-			if(barycentric_u < 0 || barycentric_u > 1) continue;
-			qvec = cross(tvec, edge0);
-			barycentric_v = dot(direction, qvec) * invDet;
-			if (barycentric_v < 0 || barycentric_u+barycentric_v > 1) continue;
-			rayDist = dot(edge2, qvec) * invDet;
-
-			//Ray hits the triangle
-			if(rayDist < *t){
-				*t = rayDist;
-				*normal = Normalize(cross(edge0, edge2));
-				m = 4;
+	if(BoxIntersect(origin, direction, trianglesBox, t)){
+		//Traverse grid
+		float4 deltaT, nextCrossingT;
+		int4 exit, step, cell;
+		const int4 dirSign = (int4)(isless(direction, 0.0f) << 31);
+		const uchar map[8] = {2, 1, 2, 1, 2, 2, 0, 0};
+		//Initialization
+		float4 rayOrigCell = (origin + direction * (*t)) - trianglesBox.vmin;
+		cell = clamp(convert_int4(floor(rayOrigCell/cell_size)), (int4)(0), grid_res - (int4)(1, 1, 1, 0));
+		deltaT = cell_size * (1/direction);
+		exit = grid_res;
+		step = (int4)(1, 1, 1, 0);
+		//If direction is negative in an axis, go backwards
+		deltaT = select(deltaT, -deltaT, dirSign);
+		exit = select(exit, (int4)(-1, -1, -1, 0), dirSign);
+		step = select(step, (int4)(-1, -1, -1, 0), dirSign);
+		float * nextCrossingT_p = (float*)(&nextCrossingT);
+		float * deltaT_p = (float*)(&deltaT);
+		int * exit_p = (int*)(&exit);
+		int * step_p = (int*)(&step);
+		int * cell_p = (int*)(&cell);
+		//Walk through each cell and test for an intersection if current cell contains triangles
+		while (1){
+			int cellIndex = cell.s2 * grid_res.x * grid_res.y + cell.s1 * grid_res.x + cell.s0;
+			Cell curr_cell = TriangleGrid[cellIndex];
+			if (curr_cell.nels > 0){
+				if(CellIntersect(origin, direction, curr_cell, Triangles, t, normal)) m = 4;
 			}
+			uchar k = ((nextCrossingT.s0 < nextCrossingT.s1) << 2) + ((nextCrossingT.s0 < nextCrossingT.s2) << 1) + ((nextCrossingT.s1 < nextCrossingT.s2));
+			uchar axis = map[k];
+			if (*t < nextCrossingT_p[axis]) break;
+			cell_p[axis] += step_p[axis];
+			if(cell_p[axis] == exit_p[axis]) break;
+			nextCrossingT_p[axis] += deltaT_p[axis];
 		}
+
 	}
 	
 	return m;
