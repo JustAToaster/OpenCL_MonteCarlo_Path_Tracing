@@ -46,7 +46,7 @@ inline float4 Normalize(float4 x){
 }
 
 inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal, 
-	global const int * restrict Spheres, global const int * restrict Squares, 
+	constant int * restrict Spheres, constant int * restrict Squares, 
 	global const Triangle * restrict Triangles, int ntriangles){
 
 	*t = 1e9;	//default distance
@@ -137,9 +137,9 @@ inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal,
 }
 
 inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * rng, 
-	global const int * restrict Spheres, global const int * restrict Squares, 
+	constant int * restrict Spheres, constant int * restrict Squares, 
 	global const Triangle * restrict Triangles, int ntriangles,
-	global const float4 * restrict scenelights, int nlights){
+	constant float4 * restrict scenelights, int nlights){
 	//Recursion vars
 	float4 colorFact = (float4)(0, 0, 0, 0);
 	int divFact = 1;
@@ -217,9 +217,9 @@ inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * r
 	}
 }
 
-kernel void pathTracer(global uchar4 * restrict img, global const int * restrict Spheres, 
-	global const int * restrict Squares, global const Triangle * restrict Triangles, int ntriangles, 
-	global const float4 * restrict scenelights, int nlights, 
+kernel void pathTracer(global uchar4 * restrict img, constant int * restrict Spheres, 
+	constant int * restrict Squares, global const Triangle * restrict Triangles, int ntriangles, 
+	constant float4 * restrict scenelights, int nlights, 
 	float4 cam_forward, float4 cam_up, float4 cam_right, float4 eye_offset, uint4 seeds){
 	float4 color = (float4)(13, 13, 13, 0);
 	int i = get_global_id(0);

@@ -40,7 +40,7 @@ inline float4 Normalize(float4 x){
 }
 
 inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal, 
-	global const int * restrict G){
+	constant int * restrict G){
 
 	*t = 1e9;
 	int m = 0;
@@ -75,7 +75,7 @@ inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal,
 }
 
 inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * rng, 
-	global const int * restrict G){
+	constant int * restrict G){
 	//Recursion vars
 	float4 colorFact = (float4)(0, 0, 0, 0);
 	int divFact = 1;
@@ -126,7 +126,7 @@ inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * r
 	}
 }
 
-kernel void pathTracer(global uchar4 * restrict img, global const int * restrict G, 
+kernel void pathTracer(global uchar4 * restrict img, constant int * restrict G, 
 	float4 cam_forward, float4 cam_up, float4 cam_right, float4 eye_offset, uint4 seeds){
 	float4 color = (float4)(13, 13, 13, 0);
 	const int i = get_global_id(0);
