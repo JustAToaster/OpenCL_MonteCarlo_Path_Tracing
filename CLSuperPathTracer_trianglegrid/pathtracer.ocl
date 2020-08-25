@@ -66,11 +66,55 @@ inline bool BoxIntersect(const float4 origin, const float4 direction, const Box 
 
 	const float l0 = fmax(fmax(tNear.x, tNear.y), fmax(tNear.x, tNear.z));
     const float l1 = fmin(fmin(tFar.x, tFar.y), fmin(tFar.x, tFar.z));
-	if (l1 < *t && l1 > l0){
-		*t = l1;
+	if (l0 < *t && l1 > l0){
+		*t = l0;
 		return true;
 	}
 	return false;
+}
+
+inline void swap(float * x, float * y){	
+	const float tmp = *x;	
+	*x = *y;	
+	*y = tmp;	
+}	
+
+inline int BoxIntersect2(float4 origin, float4 direction, const Box box, float * t){ 	
+    float tmin = (box.vmin.x - origin.x) / direction.x; 	
+    float tmax = (box.vmax.x - origin.x) / direction.x; 	
+
+    if (tmin > tmax) swap(&tmin, &tmax); 	
+
+    float tymin = (box.vmin.y - origin.y) / direction.y; 	
+    float tymax = (box.vmax.y - origin.y) / direction.y; 	
+
+    if (tymin > tymax) swap(&tymin, &tymax); 	
+
+    if ((tmin > tymax) || (tymin > tmax)) 	
+        return false; 	
+
+    if (tymin > tmin) 	
+        tmin = tymin; 	
+
+    if (tymax < tmax) 	
+        tmax = tymax; 	
+
+    float tzmin = (box.vmin.z - origin.z) / direction.z; 	
+    float tzmax = (box.vmax.z - origin.z) / direction.z; 	
+
+    if (tzmin > tzmax) swap(&tzmin, &tzmax); 	
+
+    if ((tmin > tzmax) || (tzmin > tmax)) 	
+        return 0; 	
+
+    if (tzmin > tmin) 	
+        tmin = tzmin; 	
+
+    if (tzmax < tmax) 	
+        tmax = tzmax; 	
+	
+	*t = tmin;
+    return 1; 	
 }
 
 //Check for triangle intersection (Moller-Trumbore)
@@ -170,18 +214,19 @@ inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal,
 		//Traverse grid
 		float4 deltaT, nextCrossingT;
 		int4 exit, step, cell;
-		const int4 dirSign = (int4)(isless(direction, 0.0f) << 31);
+		const int4 dirSign = (int4)(isless(direction, 0) << 31);
+		const float4 invDir = 1/direction;
 		const uchar map[8] = {2, 1, 2, 1, 2, 2, 0, 0};
 		//Initialization
 		float4 rayOrigCell = (origin + direction * (*t)) - trianglesBox.vmin;
-		cell = clamp(convert_int4(floor(rayOrigCell/cell_size)), (int4)(0), grid_res - (int4)(1, 1, 1, 0));
-		deltaT = cell_size * (1/direction);
-		exit = grid_res;
-		step = (int4)(1, 1, 1, 0);
-		//If direction is negative in an axis, go backwards
+		cell = clamp(convert_int4(rayOrigCell/cell_size), (int4)(0), grid_res - (int4)(1, 1, 1, 0));
+		deltaT = cell_size * invDir;
+		nextCrossingT = (float4)(*t, *t, *t, 0) + (convert_float4(cell + (int4)(1, 1, 1, 0))*cell_size - rayOrigCell) * invDir;
+		//Initialize parameters based on ray direction in an axis
 		deltaT = select(deltaT, -deltaT, dirSign);
-		exit = select(exit, (int4)(-1, -1, -1, 0), dirSign);
-		step = select(step, (int4)(-1, -1, -1, 0), dirSign);
+		exit = select(grid_res, (int4)(-1, -1, -1, 0), dirSign);
+		step = select((int4)(1, 1, 1, 0), (int4)(-1, -1, -1, 0), dirSign);
+		nextCrossingT = select(nextCrossingT, nextCrossingT - cell_size*invDir, dirSign);
 		float * nextCrossingT_p = (float*)(&nextCrossingT);
 		float * deltaT_p = (float*)(&deltaT);
 		int * exit_p = (int*)(&exit);
