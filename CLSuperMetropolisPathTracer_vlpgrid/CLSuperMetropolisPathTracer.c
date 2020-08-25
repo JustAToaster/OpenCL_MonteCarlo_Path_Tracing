@@ -1,6 +1,7 @@
 //Metropolis path tracer in OpenCL based on https://fabiensanglard.net/rayTracing_back_of_business_card/
 //Implemented with virtual point lights (see http://wpage.unina.it/lapegna/documents/AMS2014.pdf)
 //Supports spheres, squares and triangles
+//Grid acceleration structure for VLPs
 //Four materials (checkerboard texture, sky, diffusive, specular)
 
 #include <stdlib.h>
@@ -14,6 +15,7 @@
 #define MAX 256
 #define MAX_TRIANGLES 512
 #define MAX_LIGHTS 5
+#define MAX_NELS_PER_CELL 62 //Should be a power of two minus two for better alignment
 
 #include "../ocl_boiler.h"
 #include "../pamalign.h"
@@ -29,8 +31,38 @@ typedef struct{
 	cl_uint length;
 } cl_Path;
 
+typedef struct{
+	cl_float4 vmin;
+	cl_float4 vmax;
+} cl_Box;
+
+typedef struct{
+	cl_uint nels;
+	cl_ushort elem_index[MAX_NELS_PER_CELL];
+} cl_Cell;
+
+int max(int x, int y){
+	if(x > y) return x;
+	return y;
+}
+
+int min(int x, int y){
+	if(x < y) return x;
+	return y;
+}
+
 cl_float4 VectorSum(cl_float4 x, cl_float4 y){
 	cl_float4 value = { .x = x.s0 + y.s0, .y = x.s1 + y.s1, .z = x.s2 + y.s2, .w = 0};
+	return value;
+}
+
+cl_float4 VectorDifference(cl_float4 x, cl_float4 y){
+	cl_float4 value = { .x = x.s0 - y.s0, .y = x.s1 - y.s1, .z = x.s2 - y.s2, .w = 0};
+	return value;
+}
+
+cl_float4 VectorDivisionFloatInt(cl_float4 x, cl_int4 y){
+	cl_float4 value = { .x = x.s0/y.s0, .y = x.s1/y.s1, .z = x.s2/y.s2, .w = 0};
 	return value;
 }
 
@@ -175,8 +207,6 @@ cl_event lightTracer(cl_kernel lighttracer_k, cl_command_queue que,
 	ocl_check(err, "set light tracer arg %d", i-1);
 	err = clSetKernelArg(lighttracer_k, i++, sizeof(cl_int)*9, NULL);	//lSquares
 	ocl_check(err, "set light tracer arg %d", i-1);
-	err = clSetKernelArg(lighttracer_k, i++, sizeof(cl_Triangle)*ntriangles , NULL);	//lTriangles
-	ocl_check(err, "set light tracer arg %d", i-1);
 	err = clSetKernelArg(lighttracer_k, i++, sizeof(cl_float4)*nlights , NULL);	//lScenelights
 	ocl_check(err, "set light tracer arg %d", i-1);
 
@@ -223,8 +253,6 @@ cl_event MetropolisLightTracer(cl_kernel metrolighttracer_k, cl_command_queue qu
 	ocl_check(err, "set metropolis light tracer arg %d", i-1);
 	err = clSetKernelArg(metrolighttracer_k, i++, sizeof(cl_int)*9, NULL);	//lSquares
 	ocl_check(err, "set metropolis light tracer arg %d", i-1);
-	err = clSetKernelArg(metrolighttracer_k, i++, sizeof(cl_Triangle)*ntriangles , NULL);	//lTriangles
-	ocl_check(err, "set metropolis light tracer arg %d", i-1);
 	err = clSetKernelArg(metrolighttracer_k, i++, sizeof(cl_float4)*nlights , NULL);	//lScenelights
 	ocl_check(err, "set metropolis light tracer arg %d", i-1);
 
@@ -235,12 +263,73 @@ cl_event MetropolisLightTracer(cl_kernel metrolighttracer_k, cl_command_queue qu
 	return metrolighttracer_evt;	
 }
 
+//Setting up the kernel to compute the VLPs bounding box (first phase)
+cl_event reduction(cl_kernel reduce4_k, cl_command_queue que,
+	cl_mem d_out, cl_mem d_in, cl_int N_VLP,
+	cl_int lws_, cl_int nwg,
+	cl_event prev_evt){
+
+	printf("gws: %d, lws: %d\n", nwg*lws_, lws_);
+	const size_t gws[] = { nwg*lws_ };
+	const size_t lws[] = { lws_ };
+
+	cl_event reduce4_evt;
+	cl_int err;
+
+	cl_uint i = 0;
+	err = clSetKernelArg(reduce4_k, i++, sizeof(d_out), &d_out);
+	ocl_check(err, "set reduce4 arg", i-1);
+	err = clSetKernelArg(reduce4_k, i++, sizeof(d_in), &d_in);
+	ocl_check(err, "set reduce4 arg", i-1);
+	err = clSetKernelArg(reduce4_k, i++, sizeof(cl_float8)*lws[0], NULL);
+	ocl_check(err, "set reduce4 arg", i-1);
+	err = clSetKernelArg(reduce4_k, i++, sizeof(N_VLP), &N_VLP);
+	ocl_check(err, "set reduce4 arg", i-1);
+
+	err = clEnqueueNDRangeKernel(que, reduce4_k, 1,
+		NULL, gws, lws,
+		1, &prev_evt, &reduce4_evt);
+
+	ocl_check(err, "enqueue reduce4_lmem");
+
+	return reduce4_evt;
+}
+
+cl_event initVLPsGrid(cl_kernel initVLPsGrid_k, cl_command_queue que, cl_mem d_VLPsGrid, cl_mem d_virtual_light_points, cl_float4 VLPsBoxMin, cl_int4 grid_res, cl_float4 cell_size, cl_int N_VLP, cl_event prev_evt){
+
+	const size_t gws[] = { N_VLP };
+	
+	cl_event initVLPsGrid_evt;
+	cl_int err;
+
+	cl_uint i = 0;
+	err = clSetKernelArg(initVLPsGrid_k, i++, sizeof(d_VLPsGrid), &d_VLPsGrid);
+	ocl_check(err, "set initVLPsGrid arg %d", i-1);
+	err = clSetKernelArg(initVLPsGrid_k, i++, sizeof(d_virtual_light_points), &d_virtual_light_points);
+	ocl_check(err, "set initVLPsGrid arg %d", i-1);
+	err = clSetKernelArg(initVLPsGrid_k, i++, sizeof(VLPsBoxMin), &VLPsBoxMin);
+	ocl_check(err, "set initVLPsGrid arg %d", i-1);
+	err = clSetKernelArg(initVLPsGrid_k, i++, sizeof(grid_res), &grid_res);
+	ocl_check(err, "set initVLPsGrid arg %d", i-1);
+	err = clSetKernelArg(initVLPsGrid_k, i++, sizeof(cell_size), &cell_size);
+	ocl_check(err, "set initVLPsGrid arg %d", i-1);
+
+	err = clEnqueueNDRangeKernel(que, initVLPsGrid_k, 1, NULL, gws, NULL,
+		1, &prev_evt, &initVLPsGrid_evt);
+	ocl_check(err, "enqueue initVLPsGrid");
+
+	return initVLPsGrid_evt;	
+
+}
+
 //Setting up the kernel to render the image
 cl_event pathTracer(cl_kernel pathtracer_k, cl_command_queue que, cl_mem d_render, 
 	cl_mem d_Spheres, cl_mem d_Squares, cl_mem d_Triangles, cl_int ntriangles, 
-	cl_mem d_virtual_lights, int N_VLP, cl_mem d_scenelights, cl_int nlights, cl_uint4 seeds, 
+	cl_mem d_virtual_lights, int N_VLP, cl_mem d_VLPsGrid, cl_float4 VLPsBoxMin,
+	cl_float4 cell_size, cl_int4 grid_res,
+	cl_mem d_scenelights, cl_int nlights, cl_uint4 seeds, 
 	cl_float4 cam_forward, cl_float4 cam_up, cl_float4 cam_right, cl_float4 eye_offset, 
-	cl_int renderWidth, cl_int renderHeight, cl_event lighttracer_evt){
+	cl_int renderWidth, cl_int renderHeight, cl_event prev_evt){
 
 	const size_t gws[] = { renderWidth, renderHeight };
 
@@ -264,6 +353,14 @@ cl_event pathTracer(cl_kernel pathtracer_k, cl_command_queue que, cl_mem d_rende
 	ocl_check(err, "set path tracer arg %d", i-1);
 	err = clSetKernelArg(pathtracer_k, i++, sizeof(nvirtuallights), &nvirtuallights);
 	ocl_check(err, "set path tracer arg %d", i-1);
+	err = clSetKernelArg(pathtracer_k, i++, sizeof(d_VLPsGrid), &d_VLPsGrid);
+	ocl_check(err, "set path tracer arg %d", i-1);	
+	err = clSetKernelArg(pathtracer_k, i++, sizeof(VLPsBoxMin), &VLPsBoxMin);
+	ocl_check(err, "set path tracer arg %d", i-1);	
+	err = clSetKernelArg(pathtracer_k, i++, sizeof(cell_size), &cell_size);
+	ocl_check(err, "set path tracer arg %d", i-1);
+	err = clSetKernelArg(pathtracer_k, i++, sizeof(grid_res), &grid_res);
+	ocl_check(err, "set path tracer arg %d", i-1);
 	err = clSetKernelArg(pathtracer_k, i++, sizeof(d_scenelights), &d_scenelights);
 	ocl_check(err, "set path tracer arg %d", i-1);
 	err = clSetKernelArg(pathtracer_k, i++, sizeof(nlights), &nlights);
@@ -282,13 +379,11 @@ cl_event pathTracer(cl_kernel pathtracer_k, cl_command_queue que, cl_mem d_rende
 	ocl_check(err, "set path tracer arg %d", i-1);
 	err = clSetKernelArg(pathtracer_k, i++, sizeof(cl_int)*9 , NULL);	//lSquares
 	ocl_check(err, "set path tracer arg %d", i-1);
-	err = clSetKernelArg(pathtracer_k, i++, sizeof(cl_Triangle)*ntriangles, NULL);	//lTriangles
-	ocl_check(err, "set path tracer arg %d", i-1);
 	err = clSetKernelArg(pathtracer_k, i++, sizeof(cl_float4)*nlights, NULL);	//lScenelights
 	ocl_check(err, "set path tracer arg %d", i-1);
 
 	err = clEnqueueNDRangeKernel(que, pathtracer_k, 2, NULL, gws, NULL,
-		1, &lighttracer_evt, &pathtracer_evt);
+		1, &prev_evt, &pathtracer_evt);
 	ocl_check(err, "enqueue path tracer");
 
 	return pathtracer_evt;	
@@ -298,8 +393,9 @@ int main(int argc, char* argv[]){
 
 	int img_width = 512, img_height = 512, nseedpaths = 512;
 	cl_int mutation_rounds = 8;
+	float CELL_SIZE_MODIFIER = 3.0f;
 
-	printf("Usage: %s [img_width] [img_height] [N_seedpaths_per_light] [mutation_rounds]\nLoads data from triangles.txt, lights.txt, spheres.txt and squares.txt\n", argv[0]);
+	printf("Usage: %s [img_width] [img_height] [N_seedpaths_per_light] [mutation_rounds] [CELL_SIZE_MODIFIER]\nLoads data from triangles.txt, lights.txt, spheres.txt and squares.txt\n", argv[0]);
 
 	if(argc > 1){
 		img_width = atoi(argv[1]);
@@ -312,6 +408,9 @@ int main(int argc, char* argv[]){
 	}
 	if(argc > 4){
 		mutation_rounds = atoi(argv[4]);
+	}
+	if(argc > 5){
+		CELL_SIZE_MODIFIER = atof(argv[5]);
 	}
 
 	cl_platform_id p = select_platform();
@@ -329,6 +428,15 @@ int main(int argc, char* argv[]){
 
 	cl_kernel metrolighttracer_k = clCreateKernel(prog, "MetropolisLightTracer", &err);
 	ocl_check(err, "create kernel metrolighttracer_k");
+
+	cl_kernel initVLPsGrid_k = clCreateKernel(prog, "initVLPsGrid", &err);
+	ocl_check(err, "create kernel initVLPsGrid");
+
+	cl_kernel reduce4_k = clCreateKernel(prog, "reduceMinAndMax_lmem", &err);
+	ocl_check(err, "create kernel reduceMinAndMax_lmem");
+
+	cl_kernel reduce4_nwg_k = clCreateKernel(prog, "reduceMinAndMax_lmem_nwg", &err);
+	ocl_check(err, "create kernel reduceMinAndMax_lmem_nwg");
 	
 	//seeds for the edited MWC64X
 	cl_uint4 seeds = {.x = time(0) & 134217727, .y = (getpid() * getpid() * getpid()) & 134217727, .z = (clock()*clock()) & 134217727, .w = rdtsc() & 134217727};
@@ -392,6 +500,7 @@ int main(int argc, char* argv[]){
 	}
 
 	cl_int nlights = parseLightsFromFile("lights.txt", scenelights);
+	const cl_int N_VLP = nseedpaths*nlights*4;	//Total number of VLPs
 
 	printf("Number of triangles: %d\n", ntriangles);
 	printf("Number of lights: %d\n", nlights);
@@ -428,21 +537,76 @@ int main(int argc, char* argv[]){
 	ocl_check(err, "create buffer d_virtual_lights");
 
 	//Virtual Light Points buffer which will be filled with samples based on the seed paths
-	cl_mem d_virtual_lights = clCreateBuffer(ctx,
+	cl_mem d_virtual_lights1 = clCreateBuffer(ctx,
 		CL_MEM_READ_WRITE,
-		sizeof(cl_float4)*nseedpaths*4*nlights, NULL,
+		sizeof(cl_float4)*N_VLP, NULL,
 		&err);
-	ocl_check(err, "create buffer d_virtual_lights");
+	ocl_check(err, "create buffer d_virtual_lights1");
 
-	cl_event lighttracer_evt = lightTracer(lighttracer_k, que, d_Spheres, d_Squares, d_Triangles, ntriangles, d_scenelights, nlights, d_virtual_lights, nseedpaths, seeds);
+	cl_event lighttracer_evt = lightTracer(lighttracer_k, que, d_Spheres, d_Squares, d_Triangles, ntriangles, d_scenelights, nlights, d_virtual_lights1, nseedpaths, seeds);
 
-	cl_event metrolighttracer_evt = MetropolisLightTracer(metrolighttracer_k, que, d_Spheres, d_Squares, d_Triangles, ntriangles, d_scenelights, nlights, d_seedpaths, nseedpaths, d_virtual_lights, seeds, mutation_rounds);
+	cl_event metrolighttracer_evt = MetropolisLightTracer(metrolighttracer_k, que, d_Spheres, d_Squares, d_Triangles, ntriangles, d_scenelights, nlights, d_seedpaths, nseedpaths, d_virtual_lights1, seeds, mutation_rounds);
+
+	size_t lws;
+	err = clGetKernelWorkGroupInfo(reduce4_k, d, CL_KERNEL_PREFERRED_WORK_GROUP_SIZE_MULTIPLE, sizeof(lws), &lws, NULL);
+	ocl_check(err, "Preferred lws multiple for reduce4_k");
+	size_t nwg = round_mul_up(N_VLP, lws)/lws;
+
+	//Buffer for bounding box calculation reduction
+	cl_mem d_virtual_lights2 = clCreateBuffer(ctx,
+		CL_MEM_READ_WRITE,
+		sizeof(cl_float4)*nwg, NULL,
+		&err);
+	ocl_check(err, "create buffer d_virtual_lights2");
+
+	cl_event reduce_evt[2];
+	//Compute VLPs bounding box with min/max reduction
+	reduce_evt[0] = reduction(reduce4_k, que, d_virtual_lights1, d_virtual_lights2, N_VLP,
+		lws, nwg, metrolighttracer_evt);
+	// Wrap up the reduction
+	if (nwg > 1) {
+		reduce_evt[1] = reduction(reduce4_nwg_k, que, d_virtual_lights2, d_virtual_lights2, nwg,
+			lws, 1, reduce_evt[0]);
+	} else {
+		reduce_evt[1] = reduce_evt[0];
+	}
+
+	cl_Box VLPsBox;
+	cl_event readBox_evt;
+	err = clEnqueueReadBuffer(que, d_virtual_lights2, CL_TRUE, 0, sizeof(VLPsBox), &VLPsBox,
+		1, reduce_evt + 1, &readBox_evt);
+	ocl_check(err, "read VLP bounding box");
+	printf("VLPs bounding box values:\nvmax: %f %f %f, vmin: %f %f %f\n", VLPsBox.vmax.x, VLPsBox.vmax.y, VLPsBox.vmax.z, VLPsBox.vmin.x, VLPsBox.vmin.y, VLPsBox.vmin.z);
+
+	//Compute grid values
+	cl_float4 grid_size = VectorDifference(VLPsBox.vmax, VLPsBox.vmin);
+	float cubeRoot = cbrt(CELL_SIZE_MODIFIER*N_VLP/(grid_size.s0 * grid_size.s1 * grid_size.s2));
+	cl_int4 grid_res;
+	for (int i=0; i<3; ++i){
+		grid_res.s[i] = (int)(floor(grid_size.s[i] * cubeRoot));
+		grid_res.s[i] = max(1, min(grid_res.s[i], 128));
+	}
+	cl_float4 cell_size = VectorDivisionFloatInt(grid_size, grid_res);
+	size_t grid_memsize = sizeof(cl_Cell)*grid_res.s0*grid_res.s1*grid_res.s2;
+	cl_Cell * VLPsGrid = calloc(1, grid_memsize);
+	printf("VLPs grid size: %d x %d x %d\n", grid_res.x, grid_res.y, grid_res.z);
+
+	cl_mem d_VLPsGrid = clCreateBuffer(ctx,
+		CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
+		grid_memsize, VLPsGrid,
+		&err);
+	ocl_check(err, "create buffer d_VLPsGrid");
+
+	cl_event initVLPsGrid_evt = initVLPsGrid(initVLPsGrid_k, que, d_VLPsGrid, d_virtual_lights1, VLPsBox.vmin, grid_res, cell_size, N_VLP, readBox_evt);
+	//cl_int4 OneVec = {.x = 1, .y = 1, .z = 1, .w = 0};
+	//grid_res = VectorDifference(grid_res, OneVec);
 
 	cl_event pathtracer_evt = pathTracer(pathtracer_k, que, d_render, 
 	d_Spheres, d_Squares, d_Triangles, ntriangles, 
-	d_virtual_lights, nseedpaths*4, d_scenelights, nlights, seeds, 
+	d_virtual_lights1, N_VLP, d_VLPsGrid, VLPsBox.vmin, cell_size, grid_res,
+	d_scenelights, nlights, seeds, 
 	cam_forward, cam_up, cam_right, eye_offset, 
-	resultInfo.width, resultInfo.height, lighttracer_evt);
+	resultInfo.width, resultInfo.height, initVLPsGrid_evt);
 
 	cl_event getRender_evt;
 	
@@ -487,11 +651,13 @@ int main(int argc, char* argv[]){
 	free(Spheres);
 	free(Squares);
 	free(Triangles);
+	free(VLPsGrid);
 	free(scenelights);
 
 	clReleaseKernel(lighttracer_k);
 	clReleaseKernel(metrolighttracer_k);
 	clReleaseKernel(pathtracer_k);
+	clReleaseKernel(reduce4_k);
 	clReleaseProgram(prog);
 	clReleaseCommandQueue(que);
 	clReleaseContext(ctx);

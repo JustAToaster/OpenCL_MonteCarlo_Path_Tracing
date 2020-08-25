@@ -1,3 +1,5 @@
+#define MAX_NELS_PER_CELL 62 //Should be a power of two minus two for better alignment
+
 typedef struct{
 	float4 v0;
 	float4 v1;
@@ -9,8 +11,18 @@ typedef struct{
 //The path length is defined as the number of edges
 typedef struct{
 	float4 v[4];
-	uint length;
+	uchar length;
 } Path;
+
+typedef struct{
+	float4 vmin;
+	float4 vmax;
+} Box;
+
+typedef struct{
+	uint nels;
+	ushort elem_index[MAX_NELS_PER_CELL];
+} Cell;
 
 //MWC64x, an RNG made by David B. Tomas, with custom seeding
 //Source: http://cas.ee.ic.ac.uk/people/dt10/research/rngs-gpu-mwc64x.html
@@ -55,7 +67,7 @@ inline float4 Normalize(float4 x){
 
 inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal, 
 	local int * restrict Spheres, local int * restrict Squares, 
-	local Triangle * restrict Triangles, int ntriangles){
+	global const Triangle * restrict Triangles, int ntriangles){
 
 	int m = 0;	//default material
 	float rayDist;
@@ -156,7 +168,7 @@ inline float4 GetRandomDirection(mwc64xvec2_state_t rng){
 
 inline int AddRandomVertex(float4 origin, float4 * vertexToAdd, Path * path, 
 	local int * restrict lSpheres, local int * restrict lSquares, 
-	local Triangle * restrict lTriangles, int ntriangles, mwc64xvec2_state_t rng){
+	global const Triangle * restrict lTriangles, int ntriangles, mwc64xvec2_state_t rng){
 	const float4 direction = GetRandomDirection(rng);
 	float4 normal;
 	float t = 1e9;	//default distance
@@ -169,7 +181,7 @@ inline int AddRandomVertex(float4 origin, float4 * vertexToAdd, Path * path,
 }
 
 inline Path GetRandomPath(float4 origin, local int * restrict lSpheres, local int * restrict lSquares, 
-	local Triangle * restrict lTriangles, int ntriangles, mwc64xvec2_state_t rng){
+	global const Triangle * restrict lTriangles, int ntriangles, mwc64xvec2_state_t rng){
 	Path curr_path;
 	curr_path.length = 0;	//Default path length
 	float4 curr_origin = origin;
@@ -223,7 +235,7 @@ inline float4 Perturbation(float4 vertex, mwc64xvec2_state_t rng){
 
 //Check if destination is the first intersection point of a ray that starts from origin in the direction Normalize(destination - origin)
 inline int VerifyIntersection(float4 origin, float4 destination, local int * restrict lSpheres, 
-	local int * restrict lSquares, local Triangle * restrict lTriangles, int ntriangles){
+	local int * restrict lSquares, global const Triangle * restrict lTriangles, int ntriangles){
 	float t;
 	float4 normal;
 	const float4 direction = Normalize(destination - origin);
@@ -238,7 +250,7 @@ inline int VerifyIntersection(float4 origin, float4 destination, local int * res
 //Mutate by adding vertices and perturbation
 inline void Mutate(Path * seedpath, float4 origin, 
 	local int * restrict lSpheres, local int * restrict lSquares, 
-	local Triangle * restrict lTriangles, int ntriangles, mwc64xvec2_state_t rng){
+	global const Triangle * restrict lTriangles, int ntriangles, mwc64xvec2_state_t rng){
 	if(seedpath->length == 0){	//Path is empty, try and make a new one
 		*seedpath = GetRandomPath(origin, lSpheres, lSquares, lTriangles, ntriangles, rng);
 		if(seedpath->length == 0) return;	//Still empty, try again next round
@@ -284,8 +296,9 @@ inline void Mutate(Path * seedpath, float4 origin,
 
 inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * rng, 
 	local int * restrict Spheres, local int * restrict Squares, 
-	local Triangle * restrict Triangles, int ntriangles,
+	global const Triangle * restrict Triangles, int ntriangles,
 	global const float4 * restrict virtual_point_lights, int nvirtuallights, 
+	global const Cell * VLPsGrid, float4 VLPsBoxMin, float4 cell_size, int4 grid_res, 
 	local float4 * restrict scenelights, int nlights){
 	//Recursion vars
 	float4 colorFact = (float4)(0, 0, 0, 0);
@@ -310,28 +323,33 @@ inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * r
 
 		//Something was hit
 		intersection = (*origin) + (*direction) * t;
+		//Compute potential cell index
+		const int4 index3D = convert_int4((intersection-VLPsBoxMin)/cell_size);
+		const int index = index3D.z*grid_res.x*grid_res.y + index3D.y*grid_res.x + index3D.x;
+		if (index > 0 && index < grid_res.x * grid_res.y * grid_res.z){	//Intersection is inside the grid
+			Cell c = VLPsGrid[index];
+			//Compute total illumination factor by checking all virtual point lights in the cell
+			for(uint i=0; i<c.nels; ++i){
+				light_pos = virtual_point_lights[c.elem_index[i]];
+				light_intensity = light_pos.w;
+				if(light_intensity <= 0) continue;
+				light_pos.w = 0;
+				distanceFromLight = distance(light_pos, intersection);
+				light_dir = (light_pos - intersection)/distanceFromLight;
 
-		//Compute total illumination factor by checking all virtual point lights
-		for(int i=0; i<nvirtuallights; ++i){
-			light_pos = virtual_point_lights[i];
-			light_intensity = light_pos.w;
-			if(light_intensity <= 0) continue;
-			light_pos.w = 0;
-			distanceFromLight = distance(light_pos, intersection);
-			light_dir = (light_pos - intersection)/distanceFromLight;
-
-			//Calculate the lambertian factor
-			lamb_f = dot(light_dir, normal);
-			t = distanceFromLight;
-			//Calculate illumination factor (lambertian coefficient > 0 or in shadow)?
-			//...Or just clamp it, shadows make it painfully slow because of the number of VLPs
-			//if(lamb_f < 0 || TraceRay(intersection, light_dir, &t, &half_vec, Spheres, Squares, Triangles, ntriangles)){
-			if(lamb_f < 0){
-				lamb_f = 0;
-			}
-			else{
-				//Objects away from the light should have less illumination (Inverse square law)
-				total_illumination += lamb_f * min(light_intensity/(distanceFromLight*distanceFromLight), 1.0f);
+				//Calculate the lambertian factor
+				lamb_f = dot(light_dir, normal);
+				t = distanceFromLight;
+				//Calculate illumination factor (lambertian coefficient > 0 or in shadow)?
+				//...Or just clamp it, shadows make it painfully slow because of the number of VLPs
+				//if(lamb_f < 0 || TraceRay(intersection, light_dir, &t, &half_vec, Spheres, Squares, Triangles, ntriangles)){
+				if(lamb_f < 0){
+					lamb_f = 0;
+				}
+				else{
+					//Objects away from the light should have less illumination (Inverse square law)
+					total_illumination += lamb_f * min(light_intensity/(distanceFromLight*distanceFromLight), 1.0f);
+				}
 			}
 		}
 
@@ -379,7 +397,7 @@ inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * r
 
 inline float4 SampleFromLightSource(float4 origin, float4 direction, 
 	local int * restrict Spheres, local int * restrict Squares, 
-	local Triangle * restrict Triangles, int ntriangles,
+	global const Triangle * restrict Triangles, int ntriangles,
 	float light_intensity, int total_paths){
 
 	float t;
@@ -389,14 +407,13 @@ inline float4 SampleFromLightSource(float4 origin, float4 direction,
 
 	t = 1e9;	//default distance
 	int material = TraceRay(origin, direction, &t, &normal, Spheres, Squares, Triangles, ntriangles);
+	intersection = origin + direction * t;
 	if (!material){
 		//No surface or floor found: return dummy light source
-		return (float4)(0, 0, 0, 0);
+		return intersection;
 	}
 
 	//Something was hit
-	intersection = origin + direction * t;
-
 	//Calculate the lambertian factor
 	lamb_f = dot(direction, normal);
 
@@ -432,8 +449,7 @@ kernel void lightTracer(global const int * restrict Spheres, global const int * 
 	global const Triangle * restrict Triangles, int ntriangles, 
 	global const float4 * restrict scenelights, int nlights,
 	global Path * restrict seedpaths, uint4 seeds,
-	local int * restrict lSpheres, local int * restrict lSquares, 
-	local Triangle* restrict lTriangles, local float4 * restrict lScenelights){
+	local int * restrict lSpheres, local int * restrict lSquares, local float4 * restrict lScenelights){
 	int gi = get_global_id(0);
 	int gws = get_global_size(0);
 	int li = get_local_id(0);
@@ -453,15 +469,12 @@ kernel void lightTracer(global const int * restrict Spheres, global const int * 
 		lScenelights[li]=scenelights[li];
 	}
 
-	if(li < ntriangles){
-		lTriangles[li]=Triangles[li];
-	}
 	barrier(CLK_LOCAL_MEM_FENCE);
 	//for each light, create a path launching rays in random directions
 	for(int l=0; l<nlights; ++l){
 		current_light = lScenelights[l];
 		origin = (float4)(current_light.s012, 0);	//Get position in 3D space of current light
-		seedpaths[gi+l*gws] = GetRandomPath(origin, lSpheres, lSquares, lTriangles, ntriangles, rng);
+		seedpaths[gi+l*gws] = GetRandomPath(origin, lSpheres, lSquares, Triangles, ntriangles, rng);
 	}
 }
 
@@ -472,8 +485,7 @@ kernel void MetropolisLightTracer(global const int * restrict Spheres,
 	global const float4 * restrict scenelights, int nlights,
 	global Path * restrict seedpaths, global float16 * restrict virtual_point_lights, 
 	uint4 seeds, int mutation_rounds,
-	local int * restrict lSpheres, local int * restrict lSquares, 
-	local Triangle* restrict lTriangles, local float4 * restrict lScenelights){
+	local int * restrict lSpheres, local int * restrict lSquares, local float4 * restrict lScenelights){
 	int gi = get_global_id(0);
 	int gws = get_global_size(0);
 	int li = get_local_id(0);
@@ -497,10 +509,6 @@ kernel void MetropolisLightTracer(global const int * restrict Spheres,
 	if(li < nlights){
 		lScenelights[li]=scenelights[li];
 	}
-
-	if(li < ntriangles){
-		lTriangles[li]=Triangles[li];
-	}
 	barrier(CLK_LOCAL_MEM_FENCE);
 	//for each light, create the sample VLPs from the mutated seed path
 	for(int l=0; l<nlights; ++l){
@@ -516,12 +524,12 @@ kernel void MetropolisLightTracer(global const int * restrict Spheres,
 		curr_vlp[3] = (float4)(0);
 
 		for(int m = 0; m < mutation_rounds; ++m){
-			Mutate(&seedpath, origin, lSpheres, lSquares, lTriangles, ntriangles, rng);
+			Mutate(&seedpath, origin, lSpheres, lSquares, Triangles, ntriangles, rng);
 		}
 		//Get a light sample from each vertex
 		for(int i=0; i<seedpath.length; ++i){
 			direction = Normalize(seedpath.v[i] - origin);
-			curr_vlp[i] = SampleFromLightSource(origin, direction, lSpheres, lSquares, lTriangles, ntriangles, light_intensity/(1 << i), total_paths);
+			curr_vlp[i] = SampleFromLightSource(origin, direction, lSpheres, lSquares, Triangles, ntriangles, light_intensity/(1 << i), total_paths);
 			if (curr_vlp[i].w == 0) break;
 			origin = seedpath.v[i];
 		}
@@ -529,13 +537,111 @@ kernel void MetropolisLightTracer(global const int * restrict Spheres,
 	}
 }
 
+//Reduction to compute VLP bounding box
+kernel void reduceMinAndMax_lmem(global float4 * v1, global float8 * v2,
+	local float8 * lmem, int N_VLP){
+
+	const int gi = get_global_id(0);
+	if (gi >= N_VLP) return;
+
+	const float4 vlp = v1[gi];
+	const float4 vlp_pos = (float4)(vlp.s012, 0);
+	const float vlp_intensity = vlp.w;
+	const float radius = 16*sqrt(vlp_intensity);
+	const float4 radius_vec = (float4)(radius, radius, radius, 0);
+	float4 lmin = vlp_pos - radius_vec;
+	float4 lmax = vlp_pos + radius_vec;
+	
+	float8 lmemValue = (float8)(lmin, lmax);
+
+	const int i = get_local_id(0);
+	lmem[i] = lmemValue;
+	int working = get_local_size(0) >> 1;
+	while(working > 0){
+		barrier(CLK_LOCAL_MEM_FENCE);
+		if (i < working) {
+			lmemValue = lmem[i+working];
+			const int4 lessComparison = (int4)(isless(lmemValue.lo, lmin) << 31);
+			const int4 greaterComparison = (int4)(isgreater(lmemValue.hi, lmax) << 31);
+			lmin = select(lmin, lmemValue.lo, lessComparison);
+			lmax = select(lmax, lmemValue.hi, greaterComparison);
+			lmem[i]=(float8)(lmax, lmin);
+		}
+		working >>= 1;
+	}
+	if (i == 0){
+		v2[get_group_id(0)] = (float8)(lmin, lmax);
+	}
+
+}
+
+//Reduce nwg couples (lmin, lmax) to the actual bounding box values (vmin, vmax)
+//After this, v2 will have at the beginning (vmin, vmax), we can just treat it as a Box pointer
+kernel void reduceMinAndMax_lmem_nwg(global float8 * v1, global float8 * v2,
+	local float8 * lmem, int N_VLP){
+
+	const int gi = get_global_id(0);
+	if (gi >= N_VLP) return;
+	float8 lmemValue = v1[gi];
+	float4 lmin = lmemValue.lo;
+	float4 lmax = lmemValue.hi;
+
+	const int i = get_local_id(0);
+	lmem[i] = lmemValue;
+	int working = get_local_size(0) >> 1;
+	while(working > 0){
+		barrier(CLK_LOCAL_MEM_FENCE);
+		if (i < working) {
+			lmemValue = lmem[i+working];
+			const int4 lessComparison = (int4)(isless(lmemValue.lo, lmin) << 31);
+			const int4 greaterComparison = (int4)(isgreater(lmemValue.hi, lmax) << 31);
+			lmin = select(lmin, lmemValue.lo, lessComparison);
+			lmax = select(lmax, lmemValue.hi, greaterComparison);
+			lmem[i]=(float8)(lmax, lmin);
+		}
+		working >>= 1;
+	}
+	if (i == 0){
+		v2[get_group_id(0)] = (float8)(lmin, lmax);
+	}
+
+}
+
+inline void atomic_addVLP(volatile global Cell* c, const int VLP_ID){
+	int old = atomic_inc(&(c->nels));
+	if (old >= MAX_NELS_PER_CELL) return;
+	c->elem_index[old] = VLP_ID;
+}
+
+kernel void initVLPsGrid(global Cell * restrict VLPsGrid, global const float4 * restrict virtual_point_lights, const float4 VLPsBoxMin, const int4 grid_res, const float4 cell_size){
+	const int gi = get_global_id(0);
+	barrier(CLK_GLOBAL_MEM_FENCE);
+	const float4 vlp = virtual_point_lights[gi];
+	const float4 vlp_pos = (float4)(vlp.s012, 0);
+	const float vlp_intensity = vlp.w;
+	//Light bounding box is trivial: estimate light radius r to be 16*sqrt(light_intensity), vmin is vlp_pos-r and vmax is vlp_pos+r
+	const float radius = 16*sqrt(vlp_intensity);
+	const float4 radiusVec = (float4)(radius, radius, radius, 0);
+	//Convert to cell coordinates
+	const int4 min = clamp(convert_int4(((vlp_pos-radiusVec)-VLPsBoxMin)/cell_size), (int4)(0), grid_res-(int4)(1, 1, 1, 0));
+	const int4 max = clamp(convert_int4(((vlp_pos+radiusVec)-VLPsBoxMin)/cell_size), (int4)(0), grid_res-(int4)(1, 1, 1, 0));
+	for(int z = min.z; z <= max.z; ++z){
+		for(int y = min.y; y <= max.y; ++y){
+			for(int x = min.x; x <= max.x; ++x){
+				const int index = z*grid_res.x*grid_res.y + y*grid_res.x + x;
+				atomic_addVLP((volatile global Cell*)(VLPsGrid+index), gi);
+			}
+		}
+	}
+}
+
 kernel void pathTracer(global uchar4 * restrict img, global const int * restrict Spheres, 
 	global const int * restrict Squares, global const Triangle * restrict Triangles, int ntriangles, 
-	global const float4 * restrict virtual_point_lights, int nvlp,
+	global const float4 * restrict virtual_point_lights, int nvlp, 
+	global const Cell * VLPsGrid, float4 VLPsBoxMin, float4 cell_size, int4 grid_res,
 	global const float4 * restrict scenelights, int nlights,
 	float4 cam_forward, float4 cam_up, float4 cam_right, float4 eye_offset, uint4 seeds,
-	local int * restrict lSpheres, local int * restrict lSquares, 
-	local Triangle* restrict lTriangles, local float4 * restrict lScenelights){
+	local int * restrict lSpheres, local int * restrict lSquares, local float4 * restrict lScenelights){
 	float4 color = (float4)(13, 13, 13, 0);
 	int i = get_global_id(0);
 	int j = get_global_id(1);
@@ -550,10 +656,6 @@ kernel void pathTracer(global uchar4 * restrict img, global const int * restrict
 		lSquares[li]=Squares[li];
 	}
 
-	if(li < ntriangles){
-		lTriangles[li]=Triangles[li];
-	}
-
 	if(li < nlights){
 		lScenelights[li]=scenelights[li];
 	}
@@ -563,7 +665,7 @@ kernel void pathTracer(global uchar4 * restrict img, global const int * restrict
 		delta = cam_up * ((randValues.x - 0.5f) * 99) + cam_right * ((randValues.y - 0.5f) * 99);
 		origin = (float4)(17, 16, 8, 0) + delta;
 		direction = Normalize(delta * (-1) + (cam_up * (randValues.z + i) + cam_right * (j + randValues.w) + eye_offset) * 16);
-		color = Sample(&origin, &direction, &rng, lSpheres, lSquares, lTriangles, ntriangles, virtual_point_lights, nvlp, lScenelights, nlights) * 3.5f + color;
+		color = Sample(&origin, &direction, &rng, lSpheres, lSquares, Triangles, ntriangles, virtual_point_lights, nvlp, VLPsGrid, VLPsBoxMin, cell_size, grid_res, lScenelights, nlights) * 3.5f + color;
 	}
 	color.w = 255;
 	img[j*get_global_size(0)+i]=convert_uchar4(color);
