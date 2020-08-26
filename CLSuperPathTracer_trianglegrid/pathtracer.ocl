@@ -57,66 +57,6 @@ inline float4 Normalize(float4 x){
 	return ((1/sqrt(dot(x, x))) * x);
 }
 
-inline bool BoxIntersect(const float4 origin, const float4 direction, const Box box, float * t){
-	const float4 invRayDir = 1/direction;
-	const float4 t1 = (box.vmin - origin) * invRayDir;
-	const float4 t2 = (box.vmax - origin) * invRayDir;
-	const float4 tNear = fmin(t1, t2);
-	const float4 tFar = fmax(t1, t2);
-
-	const float l0 = fmax(fmax(tNear.x, tNear.y), fmax(tNear.x, tNear.z));
-    const float l1 = fmin(fmin(tFar.x, tFar.y), fmin(tFar.x, tFar.z));
-	if (l0 < *t && l1 > l0){
-		*t = l0;
-		return true;
-	}
-	return false;
-}
-
-inline void swap(float * x, float * y){	
-	const float tmp = *x;	
-	*x = *y;	
-	*y = tmp;	
-}	
-
-inline int BoxIntersect2(float4 origin, float4 direction, const Box box, float * t){ 	
-    float tmin = (box.vmin.x - origin.x) / direction.x; 	
-    float tmax = (box.vmax.x - origin.x) / direction.x; 	
-
-    if (tmin > tmax) swap(&tmin, &tmax); 	
-
-    float tymin = (box.vmin.y - origin.y) / direction.y; 	
-    float tymax = (box.vmax.y - origin.y) / direction.y; 	
-
-    if (tymin > tymax) swap(&tymin, &tymax); 	
-
-    if ((tmin > tymax) || (tymin > tmax)) 	
-        return false; 	
-
-    if (tymin > tmin) 	
-        tmin = tymin; 	
-
-    if (tymax < tmax) 	
-        tmax = tymax; 	
-
-    float tzmin = (box.vmin.z - origin.z) / direction.z; 	
-    float tzmax = (box.vmax.z - origin.z) / direction.z; 	
-
-    if (tzmin > tzmax) swap(&tzmin, &tzmax); 	
-
-    if ((tmin > tzmax) || (tzmin > tmax)) 	
-        return 0; 	
-
-    if (tzmin > tmin) 	
-        tmin = tzmin; 	
-
-    if (tzmax < tmax) 	
-        tmax = tzmax; 	
-	
-	*t = tmin;
-    return 1; 	
-}
-
 //Check for triangle intersection (Moller-Trumbore)
 inline bool TriangleIntersect(float4 origin, float4 direction, const Triangle curr_triangle, float * t, float4 * normal){
 
@@ -216,12 +156,16 @@ inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal,
 	}
 	//Grid traversal
 	const float4 invDir = 1/direction;
+	const float4 l1 = (trianglesBox.vmin - origin) * invDir;
+	const float4 l2 = (trianglesBox.vmax - origin) * invDir;
+	const float4 tEntry = fmin(l1, l2);
+	const float4 tExit = fmax(l1, l2);
+	const float t0 = fmax(fmax(tEntry.x, tEntry.y), fmax(tEntry.x, tEntry.z));
+    const float t1 = fmin(fmin(tExit.x, tExit.y), fmin(tExit.x, tExit.z));
+	if (t0 > t1) return m;	//Ray does not hit the box
 	const int4 invDirSign = (int4)(isgreaterequal(invDir, 0) << 31);
-	const float4 tEntry = select((trianglesBox.vmax - origin)*invDir, (trianglesBox.vmin - origin)*invDir, invDirSign);
-	const float4 tExit = select((trianglesBox.vmin - origin)*invDir, (trianglesBox.vmax - origin)*invDir, invDirSign);
-	float t0 = min(tEntry.x, min(tEntry.y, tEntry.z));
-	if (t0 > max(tExit.x, max(tExit.y, tExit.z))) return m;	//Ray does not hit the box
 	const float4 grid_resF = convert_float4(grid_res);
+	const uchar map[8] = {2, 1, 2, 1, 2, 2, 0, 0};
 	float4 p;
 	if(IsPointInside(origin, trianglesBox)) p = origin;
 	else p = origin + direction * t0;	//Initial hit point with bounding box
@@ -229,7 +173,7 @@ inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal,
 	//Ray parameter increments per cell
 	float4 delta = (tExit - tEntry)/grid_resF;
 	const int4 rayDirSign = (int4)(isgreater(direction, 0) << 31);
-	float4 next = select(tEntry + convert_float4(grid_res - idx)*delta, tEntry + (idx + (float4)(1, 1, 1, 0)) * delta, rayDirSign);
+	float4 next = select(tEntry + convert_float4(grid_res - idx)*delta, tEntry + (convert_float4(idx + (int4)(1, 1, 1, 0))) * delta, rayDirSign);
 	int4 step = select((int4)(-1, -1, -1, 0), (int4)(1, 1, 1, 0), rayDirSign);
 	int4 stop = select((int4)(-1, -1, -1, 0), grid_res, rayDirSign);
 	float * next_p = (float*)(&next);
@@ -245,9 +189,10 @@ inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal,
 			if(CellIntersect(origin, direction, curr_cell, Triangles, t, normal)) m = 4;
 		}
 		float minimal = fmin(next.s0, fmin(next.s1, next.s2));
-		uchar axis = 0;
-		while(minimal != next_p[axis]) axis++;
+		uchar k = ((next.s0 < next.s1) << 2) + ((next.s0 < next.s2) << 1) + ((next.s1 < next.s2));
+		uchar axis = map[k];
 		next_p[axis] += delta_p[axis];
+		if (*t < next_p[axis]) break;
 		idx_p[axis] += step_p[axis];
 		if(idx_p[axis] == stop_p[axis]) break;
 	}
@@ -388,12 +333,12 @@ kernel void printTrianglesGrid(const global Cell * restrict TrianglesGrid){
 	return;
 	const int gi = get_global_id(0);
 	const Cell c = TrianglesGrid[gi];
-	for(int i=0; i<c.nels; ++i){
+	for(uint i=0; i<c.nels; ++i){
 		printf("Cell %d, triangle index %hu, nels %hu\n", gi, c.elem_index[i], c.nels);
 	}
 	if(gi == 0){
 		int tot_nels = 0;
-		for(int i=0; i < get_global_size(0); ++i){
+		for(size_t i=0; i < get_global_size(0); ++i){
 			tot_nels += TrianglesGrid[i].nels; 
 		}
 		printf("Tot nels: %d\n", tot_nels);
