@@ -1,4 +1,4 @@
-#define MAX_NELS_PER_CELL 31 //Should be a power of two minus one for better alignment
+#define MAX_NELS_PER_CELL 62 //Should be a power of two minus two for better alignment
 
 typedef struct{
 	float4 v0;
@@ -12,7 +12,7 @@ typedef struct{
 } Box;
 
 typedef struct{
-	ushort nels;
+	uint nels;
 	ushort elem_index[MAX_NELS_PER_CELL];
 } Cell;
 
@@ -154,6 +154,11 @@ inline bool CellIntersect(float4 origin, float4 direction, Cell c, global const 
 	return triangleFound;
 }
 
+inline bool IsPointInside(float4 origin, const Box trianglesBox){
+	if (origin.x >= trianglesBox.vmin.x && origin.x <= trianglesBox.vmax.x && origin.y >= trianglesBox.vmin.y && origin.y <= trianglesBox.vmax.y && origin.z >= trianglesBox.vmin.z && origin.z <= trianglesBox.vmax.z) return true;
+	else return false;
+}
+
 inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal, 
 	local int * restrict Spheres, local int * restrict Squares, 
 	global const Triangle * restrict Triangles, int ntriangles, const Box trianglesBox,
@@ -209,44 +214,42 @@ inline int TraceRay(float4 origin, float4 direction, float * t, float4 * normal,
 			}
 		}
 	}
-	//Check triangles only if ray hits the box
-	if(BoxIntersect(origin, direction, trianglesBox, t)){
-		//Traverse grid
-		float4 deltaT, nextCrossingT;
-		int4 exit, step, cell;
-		const int4 dirSign = (int4)(isless(direction, 0) << 31);
-		const float4 invDir = 1/direction;
-		const uchar map[8] = {2, 1, 2, 1, 2, 2, 0, 0};
-		//Initialization
-		float4 rayOrigCell = (origin + direction * (*t)) - trianglesBox.vmin;
-		cell = clamp(convert_int4(rayOrigCell/cell_size), (int4)(0), grid_res - (int4)(1, 1, 1, 0));
-		deltaT = cell_size * invDir;
-		nextCrossingT = (float4)(*t, *t, *t, 0) + (convert_float4(cell + (int4)(1, 1, 1, 0))*cell_size - rayOrigCell) * invDir;
-		//Initialize parameters based on ray direction in an axis
-		deltaT = select(deltaT, -deltaT, dirSign);
-		exit = select(grid_res, (int4)(-1, -1, -1, 0), dirSign);
-		step = select((int4)(1, 1, 1, 0), (int4)(-1, -1, -1, 0), dirSign);
-		nextCrossingT = select(nextCrossingT, nextCrossingT - cell_size*invDir, dirSign);
-		float * nextCrossingT_p = (float*)(&nextCrossingT);
-		float * deltaT_p = (float*)(&deltaT);
-		int * exit_p = (int*)(&exit);
-		int * step_p = (int*)(&step);
-		int * cell_p = (int*)(&cell);
-		//Walk through each cell and test for an intersection if current cell contains triangles
-		while (1){
-			int cellIndex = cell.s2 * grid_res.x * grid_res.y + cell.s1 * grid_res.x + cell.s0;
-			Cell curr_cell = TriangleGrid[cellIndex];
-			if (curr_cell.nels > 0){
-				if(CellIntersect(origin, direction, curr_cell, Triangles, t, normal)) m = 4;
-			}
-			uchar k = ((nextCrossingT.s0 < nextCrossingT.s1) << 2) + ((nextCrossingT.s0 < nextCrossingT.s2) << 1) + ((nextCrossingT.s1 < nextCrossingT.s2));
-			uchar axis = map[k];
-			if (*t < nextCrossingT_p[axis]) break;
-			cell_p[axis] += step_p[axis];
-			if(cell_p[axis] == exit_p[axis]) break;
-			nextCrossingT_p[axis] += deltaT_p[axis];
+	//Grid traversal
+	const float4 invDir = 1/direction;
+	const int4 invDirSign = (int4)(isgreaterequal(invDir, 0) << 31);
+	const float4 tEntry = select((trianglesBox.vmax - origin)*invDir, (trianglesBox.vmin - origin)*invDir, invDirSign);
+	const float4 tExit = select((trianglesBox.vmin - origin)*invDir, (trianglesBox.vmax - origin)*invDir, invDirSign);
+	float t0 = min(tEntry.x, min(tEntry.y, tEntry.z));
+	if (t0 > max(tExit.x, max(tExit.y, tExit.z))) return m;	//Ray does not hit the box
+	const float4 grid_resF = convert_float4(grid_res);
+	float4 p;
+	if(IsPointInside(origin, trianglesBox)) p = origin;
+	else p = origin + direction * t0;	//Initial hit point with bounding box
+	int4 idx = clamp(convert_int4((p - trianglesBox.vmin)/cell_size), (int4)(0), grid_res - (int4)(1, 1, 1, 0));
+	//Ray parameter increments per cell
+	float4 delta = (tExit - tEntry)/grid_resF;
+	const int4 rayDirSign = (int4)(isgreater(direction, 0) << 31);
+	float4 next = select(tEntry + convert_float4(grid_res - idx)*delta, tEntry + (idx + (float4)(1, 1, 1, 0)) * delta, rayDirSign);
+	int4 step = select((int4)(-1, -1, -1, 0), (int4)(1, 1, 1, 0), rayDirSign);
+	int4 stop = select((int4)(-1, -1, -1, 0), grid_res, rayDirSign);
+	float * next_p = (float*)(&next);
+	float * delta_p = (float*)(&delta);
+	int * step_p = (int*)(&step);
+	int * stop_p = (int*)(&stop);
+	int * idx_p = (int*)(&idx);
+	//Traversal loop
+	while (true){
+		const int cellIndex = idx.s2 * grid_res.x * grid_res.y + idx.s1 * grid_res.x + idx.s0;
+		const Cell curr_cell = TriangleGrid[cellIndex];
+		if (curr_cell.nels > 0){
+			if(CellIntersect(origin, direction, curr_cell, Triangles, t, normal)) m = 4;
 		}
-
+		float minimal = fmin(next.s0, fmin(next.s1, next.s2));
+		uchar axis = 0;
+		while(minimal != next_p[axis]) axis++;
+		next_p[axis] += delta_p[axis];
+		idx_p[axis] += step_p[axis];
+		if(idx_p[axis] == stop_p[axis]) break;
 	}
 	
 	return m;
@@ -333,10 +336,16 @@ inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * r
 		}
 	}
 }
+
+inline void atomic_addTriangle(volatile global Cell* c, const int triangleID){
+	int old = atomic_inc(&(c->nels));
+	if (old >= MAX_NELS_PER_CELL) return;
+	c->elem_index[old] = triangleID;
+}
 /*
 //Add a triangle to a cell only if it is not being accessed by another work item (and it fits in the cell)
 //Only works with 64 bit cells and needs the extension for 64 bit atomics
-inline void atomic_addTriangle(volatile global Cell* val, const int triangleID){
+inline void atomic_addTriangle64(volatile global Cell* val, const int triangleID){
   union {
   Cell f;
   ulong  i;
@@ -353,10 +362,9 @@ inline void atomic_addTriangle(volatile global Cell* val, const int triangleID){
   while (atom_cmpxchg((volatile __global ulong *)val, old.i, new.i) != old.i);
 
 }
-
-kernel void initTrianglesGrid(global Cell * restrict TrianglesGrid, global const Triangle * restrict Triangles, const cl_Box trianglesBox, const int4 grid_res, const float4 cell_size){
+*/
+kernel void initTrianglesGrid(global Cell * restrict TrianglesGrid, global const Triangle * restrict Triangles, const float4 trianglesBoxMin, const int4 grid_res, const float4 cell_size){
 	const int gi = get_global_id(0);
-	global int guard = 0;
 	barrier(CLK_GLOBAL_MEM_FENCE);
 	const Triangle t = Triangles[gi];
 	Box curr_box;
@@ -364,8 +372,8 @@ kernel void initTrianglesGrid(global Cell * restrict TrianglesGrid, global const
 	curr_box.vmin = fmin(t.v0, fmin(t.v1, t.v2));
 	curr_box.vmax = fmax(t.v0, fmax(t.v1, t.v2));
 	//Convert to cell coordinates
-	const int4 min = clamp(convert_int4((curr_box.vmin-trianglesBox.vmin)/cell_size), (int4)(0), grid_res-(int4)(1, 1, 1, 0));
-	const int4 max = clamp(convert_int4((curr_box.vmax-trianglesBox.vmin)/cell_size), (int4)(0), grid_res-(int4)(1, 1, 1, 0));
+	const int4 min = clamp(convert_int4((curr_box.vmin-trianglesBoxMin)/cell_size), (int4)(0), grid_res-(int4)(1, 1, 1, 0));
+	const int4 max = clamp(convert_int4((curr_box.vmax-trianglesBoxMin)/cell_size), (int4)(0), grid_res-(int4)(1, 1, 1, 0));
 	for(int z = min.z; z <= max.z; ++z){
 		for(int y = min.y; y <= max.y; ++y){
 			for(int x = min.x; x <= max.x; ++x){
@@ -377,13 +385,21 @@ kernel void initTrianglesGrid(global Cell * restrict TrianglesGrid, global const
 }
 
 kernel void printTrianglesGrid(const global Cell * restrict TrianglesGrid){
+	return;
 	const int gi = get_global_id(0);
 	const Cell c = TrianglesGrid[gi];
 	for(int i=0; i<c.nels; ++i){
 		printf("Cell %d, triangle index %hu, nels %hu\n", gi, c.elem_index[i], c.nels);
 	}
+	if(gi == 0){
+		int tot_nels = 0;
+		for(int i=0; i < get_global_size(0); ++i){
+			tot_nels += TrianglesGrid[i].nels; 
+		}
+		printf("Tot nels: %d\n", tot_nels);
+	}
 }
-*/
+
 kernel void pathTracer(global uchar4 * restrict img, global const int * restrict Spheres, 
 	global const int * restrict Squares, global const Triangle * restrict Triangles, int ntriangles,
 	const Box trianglesBox, global const Cell * restrict TriangleGrid, const int4 grid_res,
