@@ -389,6 +389,43 @@ cl_event pathTracer(cl_kernel pathtracer_k, cl_command_queue que, cl_mem d_rende
 	return pathtracer_evt;	
 }
 
+cl_Box LightBoundingBox_host(cl_float4 light){
+	int radius = 16*sqrt(light.w);
+	cl_Box lightBox;
+	cl_float4 rad_vec = {.x = radius, .y = radius, .z = radius, .w = 0};
+	lightBox.vmin = VectorDifference(light, rad_vec);
+	lightBox.vmax = VectorSum(light, rad_vec);
+	return lightBox;
+}
+
+void computeVLPsBox_host(cl_Box * VLPsBox, cl_float4 * virtual_lights, cl_int N_VLP){
+	VLPsBox->vmin.x = CL_FLT_MAX;
+	VLPsBox->vmin.y = CL_FLT_MAX;
+	VLPsBox->vmin.z = CL_FLT_MAX;
+	VLPsBox->vmin.w = 0;
+	VLPsBox->vmax.x = CL_FLT_MIN;
+	VLPsBox->vmax.y = CL_FLT_MIN;
+	VLPsBox->vmax.z = CL_FLT_MIN;
+	VLPsBox->vmax.w = 0;
+	cl_float4 curr_VLP;
+	cl_Box lightBox;
+	for(int i=0; i<N_VLP; ++i){
+		curr_VLP = virtual_lights[i];
+		if (curr_VLP.w == 0) continue;
+		//printf("Light %d, %f %f %f, intensity %f\n", i, curr_VLP.x, curr_VLP.y, curr_VLP.z, curr_VLP.w);
+		lightBox = LightBoundingBox_host(curr_VLP);
+		//printf("Vmin %d, %f %f %f\n", i, lightBox.vmin.x, lightBox.vmin.y, lightBox.vmin.z);
+		if(lightBox.vmin.x < VLPsBox->vmin.x) VLPsBox->vmin.x = lightBox.vmin.x;
+		if(lightBox.vmin.y < VLPsBox->vmin.y) VLPsBox->vmin.y = lightBox.vmin.y;
+		if(lightBox.vmin.z < VLPsBox->vmin.z) VLPsBox->vmin.z = lightBox.vmin.z;
+
+		if(lightBox.vmax.x > VLPsBox->vmin.x) VLPsBox->vmax.x = lightBox.vmax.x;
+		if(lightBox.vmax.y > VLPsBox->vmax.y) VLPsBox->vmax.y = lightBox.vmax.y;
+		if(lightBox.vmax.z > VLPsBox->vmax.z) VLPsBox->vmax.z = lightBox.vmax.z;
+	}
+	
+}
+
 int main(int argc, char* argv[]){
 
 	int img_width = 512, img_height = 512, nseedpaths = 512;
@@ -538,7 +575,7 @@ int main(int argc, char* argv[]){
 
 	//Virtual Light Points buffer which will be filled with samples based on the seed paths
 	cl_mem d_virtual_lights1 = clCreateBuffer(ctx,
-		CL_MEM_READ_WRITE,
+		CL_MEM_READ_WRITE | CL_MEM_ALLOC_HOST_PTR,
 		sizeof(cl_float4)*N_VLP, NULL,
 		&err);
 	ocl_check(err, "create buffer d_virtual_lights1");
@@ -555,10 +592,10 @@ int main(int argc, char* argv[]){
 	//Buffer for bounding box calculation reduction
 	cl_mem d_virtual_lights2 = clCreateBuffer(ctx,
 		CL_MEM_READ_WRITE,
-		sizeof(cl_float4)*nwg, NULL,
+		sizeof(cl_float8)*nwg, NULL,
 		&err);
 	ocl_check(err, "create buffer d_virtual_lights2");
-
+	
 	cl_event reduce_evt[2];
 	//Compute VLPs bounding box with min/max reduction
 	reduce_evt[0] = reduction(reduce4_k, que, d_virtual_lights1, d_virtual_lights2, N_VLP,
@@ -570,12 +607,26 @@ int main(int argc, char* argv[]){
 	} else {
 		reduce_evt[1] = reduce_evt[0];
 	}
-
+	
 	cl_Box VLPsBox;
 	cl_event readBox_evt;
 	err = clEnqueueReadBuffer(que, d_virtual_lights2, CL_TRUE, 0, sizeof(VLPsBox), &VLPsBox,
 		1, reduce_evt + 1, &readBox_evt);
 	ocl_check(err, "read VLP bounding box");
+
+	//Host VLP bounding box computation
+	/*
+	cl_event readLights_evt;
+	cl_float4 * virtual_point_lights = calloc(1, sizeof(cl_float4)*N_VLP);
+	virtual_point_lights = clEnqueueMapBuffer(que, d_virtual_lights1, CL_TRUE,
+		CL_MAP_READ,
+		0, sizeof(cl_float4)*N_VLP,
+		1, &metrolighttracer_evt, &readLights_evt, &err);
+	ocl_check(err, "enqueue map d_virtual_lights1");
+	
+	computeVLPsBox_host(&VLPsBox, virtual_point_lights, N_VLP);
+	*/
+
 	printf("VLPs bounding box values:\nvmax: %f %f %f, vmin: %f %f %f\n", VLPsBox.vmax.x, VLPsBox.vmax.y, VLPsBox.vmax.z, VLPsBox.vmin.x, VLPsBox.vmin.y, VLPsBox.vmin.z);
 
 	//Compute grid values
@@ -592,7 +643,7 @@ int main(int argc, char* argv[]){
 	printf("VLPs grid size: %d x %d x %d\n", grid_res.x, grid_res.y, grid_res.z);
 
 	cl_mem d_VLPsGrid = clCreateBuffer(ctx,
-		CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
+		CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR,
 		grid_memsize, VLPsGrid,
 		&err);
 	ocl_check(err, "create buffer d_VLPsGrid");
@@ -625,19 +676,32 @@ int main(int argc, char* argv[]){
 
 	double runtime_lighttracer_ms = runtime_ms(lighttracer_evt);
 	double runtime_metrolighttracer_ms = runtime_ms(metrolighttracer_evt);
+	double runtime_reduce_ms = total_runtime_ms(reduce_evt[0], reduce_evt[1]);
+	double runtime_readBox_ms = runtime_ms(readBox_evt);
+	double runtime_initVLPsGrid_ms = runtime_ms(initVLPsGrid_evt);
 	double runtime_pathtracer_ms = runtime_ms(pathtracer_evt);
 	double runtime_getRender_ms = runtime_ms(getRender_evt);
-	double total_time_ms = runtime_lighttracer_ms + runtime_metrolighttracer_ms + runtime_pathtracer_ms + runtime_getRender_ms;
+	double total_time_ms = runtime_lighttracer_ms + runtime_metrolighttracer_ms + runtime_reduce_ms + runtime_initVLPsGrid_ms + runtime_pathtracer_ms + runtime_getRender_ms;
+	//double total_time_ms = runtime_lighttracer_ms + runtime_metrolighttracer_ms + runtime_initVLPsGrid_ms + runtime_pathtracer_ms + runtime_getRender_ms;
 
 	double getRender_bw_gbs = resultInfo.data_size/1.0e6/runtime_getRender_ms;
 	double lighttracer_bw_gbs = nseedpaths*nlights*sizeof(cl_float4)*4/1.0e6/runtime_lighttracer_ms;
 	double metrolighttracer_bw_gbs = nseedpaths*nlights*sizeof(cl_float4)*4/1.0e6/runtime_metrolighttracer_ms;
+	double reduce_bw_gbs = (sizeof(cl_float4)*N_VLP)/1.0e6/runtime_reduce_ms;
+	double readBox_bw_gbs = sizeof(cl_Box)/1.0e6/runtime_readBox_ms;
+	double initVLPsGrid_bw_gbs = grid_memsize/1.0e6/runtime_initVLPsGrid_ms;
 	double pathtracer_bw_gbs = resultInfo.data_size/1.0e6/runtime_pathtracer_ms;
 
 	printf("light paths random sampling : %d random light paths in %gms: %g GB/s\n",
 		nseedpaths*nlights, runtime_lighttracer_ms, lighttracer_bw_gbs);
 	printf("light paths metropolis sampling : %d virtual lights in %gms: %g GB/s\n",
-		nseedpaths*4*nlights, runtime_metrolighttracer_ms, metrolighttracer_bw_gbs);
+		N_VLP, runtime_metrolighttracer_ms, metrolighttracer_bw_gbs);
+	printf("VLPs reduction (compute bounding box) : %d virtual lights in %gms: %g GB/s\n",
+		N_VLP, runtime_reduce_ms, reduce_bw_gbs);
+	printf("Read VLPs bounding box in %gms: %g GB/s\n",
+		runtime_readBox_ms, readBox_bw_gbs);
+	printf("init VLPs grid : %d cells in %gms: %g GB/s\n",
+		grid_res.x*grid_res.y*grid_res.z, runtime_initVLPsGrid_ms, initVLPsGrid_bw_gbs);
 	printf("rendering : %d pixels in %gms: %g GB/s\n",
 		img_width*img_height, runtime_pathtracer_ms, pathtracer_bw_gbs);
 	printf("read render data : %ld uchar in %gms: %g GB/s\n",
@@ -658,6 +722,7 @@ int main(int argc, char* argv[]){
 	clReleaseKernel(metrolighttracer_k);
 	clReleaseKernel(pathtracer_k);
 	clReleaseKernel(reduce4_k);
+	clReleaseKernel(reduce4_nwg_k);
 	clReleaseProgram(prog);
 	clReleaseCommandQueue(que);
 	clReleaseContext(ctx);

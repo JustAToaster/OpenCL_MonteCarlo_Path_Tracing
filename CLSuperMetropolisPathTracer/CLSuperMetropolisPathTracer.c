@@ -397,6 +397,8 @@ int main(int argc, char* argv[]){
 	printf("Number of lights: %d\n", nlights);
 	printf("Mutation rounds: %d\n", mutation_rounds);
 
+	cl_int n_VLP = nseedpaths*4*nlights;
+
 	cl_mem d_Spheres = clCreateBuffer(ctx,
 		CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
 		sizeof(cl_int)*9, Spheres,
@@ -430,7 +432,7 @@ int main(int argc, char* argv[]){
 	//Virtual Light Points buffer which will be filled with samples based on the seed paths
 	cl_mem d_virtual_lights = clCreateBuffer(ctx,
 		CL_MEM_READ_WRITE,
-		sizeof(cl_float4)*nseedpaths*4*nlights, NULL,
+		sizeof(cl_float4)*N_VLP, NULL,
 		&err);
 	ocl_check(err, "create buffer d_virtual_lights");
 
@@ -440,7 +442,7 @@ int main(int argc, char* argv[]){
 
 	cl_event pathtracer_evt = pathTracer(pathtracer_k, que, d_render, 
 	d_Spheres, d_Squares, d_Triangles, ntriangles, 
-	d_virtual_lights, nseedpaths*4, d_scenelights, nlights, seeds, 
+	d_virtual_lights, N_VLP, d_scenelights, nlights, seeds, 
 	cam_forward, cam_up, cam_right, eye_offset, 
 	resultInfo.width, resultInfo.height, lighttracer_evt);
 
@@ -473,7 +475,7 @@ int main(int argc, char* argv[]){
 	printf("light paths random sampling : %d random light paths in %gms: %g GB/s\n",
 		nseedpaths*nlights, runtime_lighttracer_ms, lighttracer_bw_gbs);
 	printf("light paths metropolis sampling : %d virtual lights in %gms: %g GB/s\n",
-		nseedpaths*4*nlights, runtime_metrolighttracer_ms, metrolighttracer_bw_gbs);
+		N_VLP, runtime_metrolighttracer_ms, metrolighttracer_bw_gbs);
 	printf("rendering : %d pixels in %gms: %g GB/s\n",
 		img_width*img_height, runtime_pathtracer_ms, pathtracer_bw_gbs);
 	printf("read render data : %ld uchar in %gms: %g GB/s\n",

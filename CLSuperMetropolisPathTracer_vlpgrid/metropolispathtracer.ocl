@@ -407,13 +407,14 @@ inline float4 SampleFromLightSource(float4 origin, float4 direction,
 
 	t = 1e9;	//default distance
 	int material = TraceRay(origin, direction, &t, &normal, Spheres, Squares, Triangles, ntriangles);
-	intersection = origin + direction * t;
+	
 	if (!material){
 		//No surface or floor found: return dummy light source
-		return intersection;
+		return (float4)(0);
 	}
 
 	//Something was hit
+	intersection = origin + direction * t;
 	//Calculate the lambertian factor
 	lamb_f = dot(direction, normal);
 
@@ -441,7 +442,7 @@ inline float4 SampleFromLightSource(float4 origin, float4 direction,
 	if(material == 3){	//diffuse shader
 		return (float4)(intersection.s012, 40*lamb_f/(total_paths/256));
 	}
-	return (float4)(0, 0, 0, 0);
+	return (float4)(0);
 }
 
 //Compute random paths through the scene as seeds for the second phase
@@ -542,15 +543,21 @@ kernel void reduceMinAndMax_lmem(global float4 * v1, global float8 * v2,
 	local float8 * lmem, int N_VLP){
 
 	const int gi = get_global_id(0);
-	if (gi >= N_VLP) return;
 
 	const float4 vlp = v1[gi];
-	const float4 vlp_pos = (float4)(vlp.s012, 0);
 	const float vlp_intensity = vlp.w;
-	const float radius = 16*sqrt(vlp_intensity);
-	const float4 radius_vec = (float4)(radius, radius, radius, 0);
-	float4 lmin = vlp_pos - radius_vec;
-	float4 lmax = vlp_pos + radius_vec;
+	float4 lmin, lmax;
+	if(vlp_intensity == 0 || gi >= N_VLP){	//If dummy light, it needs to be ignored
+		lmin = (float4)(FLT_MAX, FLT_MAX, FLT_MAX, 0);
+		lmax = (float4)(FLT_MIN, FLT_MIN, FLT_MIN, 0);
+	}
+	else{
+		const float4 vlp_pos = (float4)(vlp.s012, 0);
+		const float radius = 16*sqrt(vlp_intensity);
+		const float4 radius_vec = (float4)(radius, radius, radius, 0);
+		lmin = vlp_pos - radius_vec;
+		lmax = vlp_pos + radius_vec;	
+	}
 	
 	float8 lmemValue = (float8)(lmin, lmax);
 
@@ -562,10 +569,10 @@ kernel void reduceMinAndMax_lmem(global float4 * v1, global float8 * v2,
 		if (i < working) {
 			lmemValue = lmem[i+working];
 			const int4 lessComparison = (int4)(isless(lmemValue.lo, lmin) << 31);
-			const int4 greaterComparison = (int4)(isgreater(lmemValue.hi, lmax) << 31);
 			lmin = select(lmin, lmemValue.lo, lessComparison);
+			const int4 greaterComparison = (int4)(isgreater(lmemValue.hi, lmax) << 31);
 			lmax = select(lmax, lmemValue.hi, greaterComparison);
-			lmem[i]=(float8)(lmax, lmin);
+			lmem[i]=(float8)(lmin, lmax);		
 		}
 		working >>= 1;
 	}
@@ -581,10 +588,18 @@ kernel void reduceMinAndMax_lmem_nwg(global float8 * v1, global float8 * v2,
 	local float8 * lmem, int N_VLP){
 
 	const int gi = get_global_id(0);
-	if (gi >= N_VLP) return;
-	float8 lmemValue = v1[gi];
-	float4 lmin = lmemValue.lo;
-	float4 lmax = lmemValue.hi;
+	float8 lmemValue;
+	float4 lmin, lmax;
+	if (gi >= N_VLP){
+		lmin = (float4)(FLT_MAX, FLT_MAX, FLT_MAX, 0);
+		lmax = (float4)(FLT_MIN, FLT_MIN, FLT_MIN, 0);
+		lmemValue = (float8)(lmin, lmax);
+	}
+	else{
+		lmemValue = v1[gi];
+		lmin = lmemValue.lo;
+		lmax = lmemValue.hi;
+	}
 
 	const int i = get_local_id(0);
 	lmem[i] = lmemValue;
@@ -597,7 +612,7 @@ kernel void reduceMinAndMax_lmem_nwg(global float8 * v1, global float8 * v2,
 			const int4 greaterComparison = (int4)(isgreater(lmemValue.hi, lmax) << 31);
 			lmin = select(lmin, lmemValue.lo, lessComparison);
 			lmax = select(lmax, lmemValue.hi, greaterComparison);
-			lmem[i]=(float8)(lmax, lmin);
+			lmem[i]=(float8)(lmin, lmax);
 		}
 		working >>= 1;
 	}

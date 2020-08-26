@@ -249,7 +249,7 @@ inline void Mutate(Path * seedpath, float4 origin,
 	Path temp_path;
 	temp_path.length = 0;
 	float4 curr_origin = origin;
-	for(int i=0; i<seedpath->length; ++i){
+	for(uint i=0; i<seedpath->length; ++i){
 		temp_path.v[i] = Perturbation(seedpath->v[i], rng);
 		if (VerifyIntersection(curr_origin, temp_path.v[i], lSpheres, lSquares, lTriangles, ntriangles)){
 			temp_path.length++;
@@ -519,7 +519,7 @@ kernel void MetropolisLightTracer(global const int * restrict Spheres,
 			Mutate(&seedpath, origin, lSpheres, lSquares, lTriangles, ntriangles, rng);
 		}
 		//Get a light sample from each vertex
-		for(int i=0; i<seedpath.length; ++i){
+		for(uint i=0; i<seedpath.length; ++i){
 			direction = Normalize(seedpath.v[i] - origin);
 			curr_vlp[i] = SampleFromLightSource(origin, direction, lSpheres, lSquares, lTriangles, ntriangles, light_intensity/(1 << i), total_paths);
 			if (curr_vlp[i].w == 0) break;

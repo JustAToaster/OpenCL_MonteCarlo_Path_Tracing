@@ -14,7 +14,7 @@
 #define MAX 256
 #define MAX_TRIANGLES 512
 #define MAX_LIGHTS 5
-#define MAX_NELS_PER_CELL 31 //Should be a power of two minus one for better alignment
+#define MAX_NELS_PER_CELL 62 //Should be a power of two minus two for better alignment
 
 #include "../ocl_boiler.h"
 #include "../pamalign.h"
@@ -31,7 +31,7 @@ typedef struct{
 } cl_Box;
 
 typedef struct{
-	cl_ushort nels;
+	cl_uint nels;
 	cl_ushort elem_index[MAX_NELS_PER_CELL];
 } cl_Cell;
 
@@ -230,7 +230,7 @@ int parseLightsFromFile(char * fileName, cl_float4 * arr){
 	return curr_light;
 }
 
-void initTrianglesGrid(cl_Cell * TrianglesGrid, cl_Triangle * Triangles, cl_int4 grid_res, cl_float4 cell_size, cl_Box trianglesBox, cl_int ntriangles){
+void initTrianglesGrid_host(cl_Cell * TrianglesGrid, cl_Triangle * Triangles, cl_int4 grid_res, cl_float4 cell_size, cl_Box trianglesBox, cl_int ntriangles){
 	cl_int4 unitVec = { .x = 1, .y = 1, .z = 1, .w = 0};
 	cl_int4 zeroVec = { .x = 0, .y = 0, .z = 0, .w = 0};
 	for(int curr_triangle=0; curr_triangle < ntriangles; ++curr_triangle){
@@ -269,7 +269,7 @@ void printTrianglesGrid_host(cl_Cell * TrianglesGrid, cl_int4 grid_res){
 	int max_nels = 0;
 	for(int k=0; k<grid_res.x*grid_res.y*grid_res.z; ++k){
 		for(int i=0; i<TrianglesGrid[k].nels; ++i){
-			printf("Cell %d, triangle index %hu, nels %hu\n", k, TrianglesGrid[k].elem_index[i], TrianglesGrid[k].nels);
+			printf("Cell %d, triangle index %hu, nels %d\n", k, TrianglesGrid[k].elem_index[i], TrianglesGrid[k].nels);
 		}
 		nels_count += TrianglesGrid[k].nels;
 		if (TrianglesGrid[k].nels > max_nels) max_nels = TrianglesGrid[k].nels;
@@ -326,7 +326,7 @@ cl_event pathTracer(cl_kernel pathtracer_k, cl_command_queue que, cl_mem d_rende
 	cl_Box trianglesBox, cl_mem d_TriangleGrid, cl_int4 grid_res, cl_float4 cell_size,
 	cl_mem d_scenelights, cl_int nlights,
 	cl_uint4 seeds, cl_float4 cam_forward, cl_float4 cam_up, cl_float4 cam_right, 
-	cl_float4 eye_offset, cl_int renderWidth, cl_int renderHeight){
+	cl_float4 eye_offset, cl_int renderWidth, cl_int renderHeight, cl_event TrianglesGrid_evt){
 
 	const size_t gws[] = { renderWidth, renderHeight };
 
@@ -374,7 +374,7 @@ cl_event pathTracer(cl_kernel pathtracer_k, cl_command_queue que, cl_mem d_rende
 	ocl_check(err, "set path tracer arg %d", i-1);
 
 	err = clEnqueueNDRangeKernel(que, pathtracer_k, 2, NULL, gws, NULL,
-		0, NULL, &pathtracer_evt);
+		1, &TrianglesGrid_evt, &pathtracer_evt);
 	ocl_check(err, "enqueue path tracer");
 
 	return pathtracer_evt;	
@@ -404,11 +404,11 @@ int main(int argc, char* argv[]){
 	cl_program prog = create_program("pathtracer.ocl", ctx, d);
 	cl_int err;
 
-	//cl_kernel initTrianglesGrid_k = clCreateKernel(prog, "initTrianglesGrid", &err);
-	//ocl_check(err, "create kernel initTrianglesGrid_k");
+	cl_kernel initTrianglesGrid_k = clCreateKernel(prog, "initTrianglesGrid", &err);
+	ocl_check(err, "create kernel initTrianglesGrid_k");
 
-	//cl_kernel printTrianglesGrid_k = clCreateKernel(prog, "printTrianglesGrid", &err);
-	//ocl_check(err, "create kernel printTrianglesGrid_k");
+	cl_kernel printTrianglesGrid_k = clCreateKernel(prog, "printTrianglesGrid", &err);
+	ocl_check(err, "create kernel printTrianglesGrid_k");
 
 	cl_kernel pathtracer_k = clCreateKernel(prog, "pathTracer", &err);
 	ocl_check(err, "create kernel pathtracer_k");
@@ -484,12 +484,6 @@ int main(int argc, char* argv[]){
 	size_t grid_memsize = sizeof(cl_Cell)*grid_res.s0*grid_res.s1*grid_res.s2;
 	cl_Cell * TrianglesGrid = calloc(1, grid_memsize);
 	printf("Triangles grid size: %d x %d x %d\n", grid_res.x, grid_res.y, grid_res.z);
-  	
-	clock_t start_initTrianglesGrid, end_initTrianglesGrid;
-  	start_initTrianglesGrid = clock();
-	initTrianglesGrid(TrianglesGrid, Triangles, grid_res, cell_size, trianglesBox, ntriangles);
-	end_initTrianglesGrid = clock();
-	printTrianglesGrid_host(TrianglesGrid, grid_res);
 
 	cl_int nlights = parseLightsFromFile("lights.txt", scenelights);
 
@@ -525,15 +519,20 @@ int main(int argc, char* argv[]){
 		sizeof(cl_float4)*nlights, scenelights,
 		&err);
 	ocl_check(err, "create buffer d_scenelights");
+	//clock_t start_initTrianglesGrid, end_initTrianglesGrid;
+  	//start_initTrianglesGrid = clock();
+	//initTrianglesGrid(TrianglesGrid, Triangles, grid_res, cell_size, trianglesBox, ntriangles);
+	//end_initTrianglesGrid = clock();
+	//printTrianglesGrid_host(TrianglesGrid, grid_res);
 
-	//cl_event initTrianglesGrid_evt = initTrianglesGrid_device(initTrianglesGrid_k, que, d_TrianglesGrid, d_Triangles, trianglesBox.vmin, grid_res, cell_size, ntriangles);
-	//cl_event printTrianglesGrid_evt = printTrianglesGrid(printTrianglesGrid_k, que, d_TrianglesGrid, grid_res, initTrianglesGrid_evt);
+	cl_event initTrianglesGrid_evt = initTrianglesGrid_device(initTrianglesGrid_k, que, d_TrianglesGrid, d_Triangles, trianglesBox.vmin, grid_res, cell_size, ntriangles);
+	cl_event printTrianglesGrid_evt = printTrianglesGrid(printTrianglesGrid_k, que, d_TrianglesGrid, grid_res, initTrianglesGrid_evt);
 
 	cl_event pathtracer_evt = pathTracer(pathtracer_k, que, d_render, 
 	d_Spheres, d_Squares, d_Triangles, ntriangles, trianglesBox,
 	d_TrianglesGrid, grid_res, cell_size, d_scenelights, nlights, seeds, 
 	cam_forward, cam_up, cam_right, eye_offset, 
-	resultInfo.width, resultInfo.height);
+	resultInfo.width, resultInfo.height, printTrianglesGrid_evt);
 
 	cl_event getRender_evt;
 	
@@ -550,8 +549,8 @@ int main(int argc, char* argv[]){
 	}
 	else printf("\nSuccessfully created render image %s in the current directory\n\n", imageName);
 
-	//double runtime_initTrianglesGrid_ms = runtime_ms(initTrianglesGrid_evt);
-	double runtime_initTrianglesGrid_ms = (end_initTrianglesGrid - start_initTrianglesGrid)*1.0e3/CLOCKS_PER_SEC;
+	double runtime_initTrianglesGrid_ms = runtime_ms(initTrianglesGrid_evt);
+	//double runtime_initTrianglesGrid_ms = (end_initTrianglesGrid - start_initTrianglesGrid)*1.0e3/CLOCKS_PER_SEC;
 	double runtime_pathtracer_ms = runtime_ms(pathtracer_evt);
 	double runtime_getRender_ms = runtime_ms(getRender_evt);
 	double total_time_ms = runtime_pathtracer_ms + runtime_getRender_ms;
@@ -560,7 +559,7 @@ int main(int argc, char* argv[]){
 	double initTrianglesGrid_bw_gbs = grid_memsize/1.0e6/runtime_initTrianglesGrid_ms;
 	double getRender_bw_gbs = resultInfo.data_size/1.0e6/runtime_getRender_ms;
 
-	printf("init triangles grid (host) : %d cells in %gms: %g GB/s\n",
+	printf("init triangles grid : %d cells in %gms: %g GB/s\n",
 		grid_res.x*grid_res.y*grid_res.z, runtime_initTrianglesGrid_ms, initTrianglesGrid_bw_gbs);
 	printf("rendering : %d pixels in %gms: %g GB/s\n",
 		img_width*img_height, runtime_pathtracer_ms, pathtracer_bw_gbs);
