@@ -531,10 +531,6 @@ int main(int argc, char* argv[]){
 	parseArrayFromFile("squares.txt", Squares);
 
 	cl_int ntriangles = parseTrianglesFromFile("triangles.txt", Triangles);
-	if(ntriangles > lws_max){
-		printf("Too many triangles for local memory: reducing from %d to to %ld\n", ntriangles, lws_max);
-		ntriangles = lws_max;
-	}
 
 	cl_int nlights = parseLightsFromFile("lights.txt", scenelights);
 	const cl_int N_VLP = nseedpaths*nlights*4;	//Total number of VLPs
@@ -571,11 +567,11 @@ int main(int argc, char* argv[]){
 		CL_MEM_READ_WRITE,
 		sizeof(cl_Path)*nseedpaths*nlights, NULL,
 		&err);
-	ocl_check(err, "create buffer d_virtual_lights");
+	ocl_check(err, "create buffer d_seedpaths");
 
 	//Virtual Light Points buffer which will be filled with samples based on the seed paths
 	cl_mem d_virtual_lights1 = clCreateBuffer(ctx,
-		CL_MEM_READ_WRITE | CL_MEM_ALLOC_HOST_PTR,
+		CL_MEM_READ_WRITE,
 		sizeof(cl_float4)*N_VLP, NULL,
 		&err);
 	ocl_check(err, "create buffer d_virtual_lights1");
@@ -587,9 +583,9 @@ int main(int argc, char* argv[]){
 	size_t lws;
 	err = clGetKernelWorkGroupInfo(reduce4_k, d, CL_KERNEL_PREFERRED_WORK_GROUP_SIZE_MULTIPLE, sizeof(lws), &lws, NULL);
 	ocl_check(err, "Preferred lws multiple for reduce4_k");
-	size_t nwg = round_mul_up(N_VLP, lws)/lws;
+	size_t nwg = round_mul_up(N_VLP, lws)/lws;	//Nwg for reduction
 
-	//Buffer for bounding box calculation reduction
+	//Auxiliary buffer for bounding box computation with reduction
 	cl_mem d_virtual_lights2 = clCreateBuffer(ctx,
 		CL_MEM_READ_WRITE,
 		sizeof(cl_float8)*nwg, NULL,
@@ -638,12 +634,12 @@ int main(int argc, char* argv[]){
 		grid_res.s[i] = max(1, min(grid_res.s[i], 128));
 	}
 	cl_float4 cell_size = VectorDivisionFloatInt(grid_size, grid_res);
-	size_t grid_memsize = sizeof(cl_Cell)*grid_res.s0*grid_res.s1*grid_res.s2;
+	size_t grid_memsize = sizeof(cl_Cell) * grid_res.x * grid_res.y * grid_res.z;
 	cl_Cell * VLPsGrid = calloc(1, grid_memsize);
 	printf("VLPs grid size: %d x %d x %d\n", grid_res.x, grid_res.y, grid_res.z);
 
 	cl_mem d_VLPsGrid = clCreateBuffer(ctx,
-		CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR,
+		CL_MEM_READ_WRITE,
 		grid_memsize, VLPsGrid,
 		&err);
 	ocl_check(err, "create buffer d_VLPsGrid");
@@ -696,7 +692,7 @@ int main(int argc, char* argv[]){
 		nseedpaths*nlights, runtime_lighttracer_ms, lighttracer_bw_gbs);
 	printf("light paths metropolis sampling : %d virtual lights in %gms: %g GB/s\n",
 		N_VLP, runtime_metrolighttracer_ms, metrolighttracer_bw_gbs);
-	printf("VLPs reduction (compute bounding box) : %d virtual lights in %gms: %g GB/s\n",
+	printf("VLPs min/max reduction (compute bounding box) : %d virtual lights in %gms: %g GB/s\n",
 		N_VLP, runtime_reduce_ms, reduce_bw_gbs);
 	printf("Read VLPs bounding box in %gms: %g GB/s\n",
 		runtime_readBox_ms, readBox_bw_gbs);

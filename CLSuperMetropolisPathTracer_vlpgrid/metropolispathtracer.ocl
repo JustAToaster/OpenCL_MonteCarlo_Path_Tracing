@@ -332,7 +332,6 @@ inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * r
 			for(uint i=0; i<c.nels; ++i){
 				light_pos = virtual_point_lights[c.elem_index[i]];
 				light_intensity = light_pos.w;
-				if(light_intensity <= 0) continue;
 				light_pos.w = 0;
 				distanceFromLight = distance(light_pos, intersection);
 				light_dir = (light_pos - intersection)/distanceFromLight;
@@ -340,9 +339,6 @@ inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * r
 				//Calculate the lambertian factor
 				lamb_f = dot(light_dir, normal);
 				t = distanceFromLight;
-				//Calculate illumination factor (lambertian coefficient > 0 or in shadow)?
-				//...Or just clamp it, shadows make it painfully slow because of the number of VLPs
-				//if(lamb_f < 0 || TraceRay(intersection, light_dir, &t, &half_vec, Spheres, Squares, Triangles, ntriangles)){
 				if(lamb_f < 0){
 					lamb_f = 0;
 				}
@@ -433,7 +429,7 @@ inline float4 SampleFromLightSource(float4 origin, float4 direction,
 	//return a light at position intersection with an intensity inversely proportional to the number of VLPs
 	if(material == 1){
 		//The ray was going downward: return floor light
-		return (float4)(intersection.s012, 100*lamb_f/(total_paths/256));
+		return (float4)(intersection.s012, 400*lamb_f/(total_paths/256));
 	}
 	if(material == 2){
 		//The ray hits a specular surface, which should reflect most light: return a dim light
@@ -538,12 +534,11 @@ kernel void MetropolisLightTracer(global const int * restrict Spheres,
 	}
 }
 
-//Reduction to compute VLP bounding box
+//Reduction to compute VLPs bounding box
 kernel void reduceMinAndMax_lmem(global float4 * v1, global float8 * v2,
 	local float8 * lmem, int N_VLP){
 
 	const int gi = get_global_id(0);
-
 	const float4 vlp = v1[gi];
 	const float vlp_intensity = vlp.w;
 	float4 lmin, lmax;
@@ -634,6 +629,7 @@ kernel void initVLPsGrid(global Cell * restrict VLPsGrid, global const float4 * 
 	const float4 vlp = virtual_point_lights[gi];
 	const float4 vlp_pos = (float4)(vlp.s012, 0);
 	const float vlp_intensity = vlp.w;
+	if(vlp_intensity == 0) return;
 	//Light bounding box is trivial: estimate light radius r to be 16*sqrt(light_intensity), vmin is vlp_pos-r and vmax is vlp_pos+r
 	const float radius = 16*sqrt(vlp_intensity);
 	const float4 radiusVec = (float4)(radius, radius, radius, 0);

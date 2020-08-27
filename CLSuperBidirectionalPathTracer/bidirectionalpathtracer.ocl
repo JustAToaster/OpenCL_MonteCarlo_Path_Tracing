@@ -238,7 +238,7 @@ inline float4 SampleFromLightSource(float4 origin, float4 direction,
 
 	t = 1e9;	//default distance
 	int material = TraceRay(origin, direction, &t, &normal, Spheres, Squares, Triangles, ntriangles);
-	if (material != 1 && material != 3){
+	if (!material){
 		//No diffuse surface or floor found: return dummy light source
 		return (float4)(0, 0, 0, 0);
 	}
@@ -266,9 +266,14 @@ inline float4 SampleFromLightSource(float4 origin, float4 direction,
 		//The ray was going downward: return floor light
 		return (float4)(intersection.s012, 70*lamb_f/(total_vlp/512));
 	}
+	if(material == 2){
+		//The ray hits a reflective surface: return dim light
+		return (float4)(intersection.s012, 5*lamb_f/(total_vlp/512));
+	}
 	if(material == 3){	//diffuse shader
 		return (float4)(intersection.s012, 40*lamb_f/(total_vlp/512));
 	}
+	return (float4)(0);
 
 }
 

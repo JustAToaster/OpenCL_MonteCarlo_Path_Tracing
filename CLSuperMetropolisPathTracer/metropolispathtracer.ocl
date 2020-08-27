@@ -415,7 +415,7 @@ inline float4 SampleFromLightSource(float4 origin, float4 direction,
 	//return a light at position intersection with an intensity inversely proportional to the number of VLPs
 	if(material == 1){
 		//The ray was going downward: return floor light
-		return (float4)(intersection.s012, 100*lamb_f/(total_paths/256));
+		return (float4)(intersection.s012, 400*lamb_f/(total_paths/256));
 	}
 	if(material == 2){
 		//The ray hits a specular surface, which should reflect most light: return a dim light

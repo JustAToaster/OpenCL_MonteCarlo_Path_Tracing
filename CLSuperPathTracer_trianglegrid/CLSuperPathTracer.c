@@ -12,7 +12,7 @@
 
 #define CL_TARGET_OPENCL_VERSION 120
 #define MAX 256
-#define MAX_TRIANGLES 512
+#define MAX_TRIANGLES 65536
 #define MAX_LIGHTS 5
 #define MAX_NELS_PER_CELL 62 //Should be a power of two minus two for better alignment
 
