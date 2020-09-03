@@ -51,9 +51,10 @@ static inline uint64_t rdtsc(void)
 //Setting up the kernel to render the image
 cl_event pathTracer(cl_kernel spt_k, cl_command_queue que, cl_mem d_render, cl_mem d_G, 
 	cl_uint4 seeds, cl_float4 cam_forward, cl_float4 cam_up, cl_float4 cam_right, cl_float4 eye_offset, 
-	cl_int plotWidth, cl_int plotHeight){
+	cl_int plotWidth, cl_int plotHeight, int _lws){
 
 	const size_t gws[] = { plotWidth, plotHeight };
+	const size_t lws[] = { _lws, _lws };
 
 	cl_event spt_evt;
 	cl_int err;
@@ -74,7 +75,7 @@ cl_event pathTracer(cl_kernel spt_k, cl_command_queue que, cl_mem d_render, cl_m
 	err = clSetKernelArg(spt_k, i++, sizeof(seeds), &seeds);
 	ocl_check(err, "set path tracer arg %d", i-1);
 
-	err = clEnqueueNDRangeKernel(que, spt_k, 2, NULL, gws, NULL,
+	err = clEnqueueNDRangeKernel(que, spt_k, 2, NULL, gws, lws,
 		0, NULL, &spt_evt);
 	ocl_check(err, "enqueue path tracer");
 
@@ -83,14 +84,21 @@ cl_event pathTracer(cl_kernel spt_k, cl_command_queue que, cl_mem d_render, cl_m
 
 int main(int argc, char* argv[]){
 
-	int img_width = 512, img_height = 512;
-	printf("Usage: %s [img_width] [img_height]\n", argv[0]);
+	int img_width = 512, img_height = 512, lws0 = 8;
+	printf("Usage: %s [img_width] [img_height] [lws0] (lws will be lws0xlws0)\n", argv[0]);
 
 	if(argc > 1){
 		img_width = atoi(argv[1]);
 	}
 	if (argc > 2){
 		img_height = atoi(argv[2]);
+	}
+	if (argc > 3){
+		lws0 = atoi(argv[3]);
+		if (round_mul_up(img_width, lws0) != img_width || round_mul_up(img_height, lws0) != img_height){
+			fprintf(stderr, "Img_width and img_height should be a multiple of lws0: %d\n", lws0);
+			exit(1);
+		}
 	}
 
 	cl_platform_id p = select_platform();
@@ -141,6 +149,8 @@ int main(int argc, char* argv[]){
 	cl_float4 eye_offset = VectorSum(ScalarTimesVector((float)(-256), VectorSum(cam_up, cam_right)), cam_forward);
 
 	/*
+	cl_float4 cam_forward = { .x = -6, .y = -16, .z = 0, .w = 0 };
+	cam_forward = Normalize(cam_forward);
 	cl_float4 cam_up = { .x = 0.001873f, .y = -0.000702f, .z = 0.0f, .w = 0 };
 	cl_float4 cam_right = { .x = 0.0f, .y = 0.0f, .z = 0.002f, .w = 0 };
 	cl_float4 eye_offset = { .x = -0.830524f, .y = -0.756554f, .z = -0.512f, .w = 0 };
@@ -150,15 +160,34 @@ int main(int argc, char* argv[]){
 
 	//Spheres
 	cl_int G[9] = {247570, 280596, 280600, 249748, 18578, 18577, 231184, 16, 16};
-	//cl_int G[9] = {2048, 0, 0, 0, 0, 0, 0, 0, 0};
-
+   /*
+   16                    1    
+   16                    1    
+   231184   111    111   1    
+   18577       1  1   1  1   1
+   18578       1  1   1  1  1 
+   249748   1111  11111  1 1  
+   280600  1   1  1      11   
+   280596  1   1  1      1 1  
+   247570   1111   111   1  1 
+           
+		   
+	134664 1      111     1  
+	131368 1         1  1 1
+	131336 1         1    1
+	135044 1      111     1
+	131336 1         1    1
+	131336 1         1    1
+	249406 1111   111   11111
+	*/
+	//cl_int G[9] = {0, 0, 249406, 131336, 131336, 134664, 131336, 131368, 134664};
 	cl_mem d_G = clCreateBuffer(ctx,
 		CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
 		sizeof(G), G,
 		&err);
 	ocl_check(err, "create buffer d_G");
 
-	cl_event spt_evt = pathTracer(spt_k, que, d_render, d_G, seeds, cam_forward, cam_up, cam_right, eye_offset, resultInfo.width, resultInfo.height);
+	cl_event spt_evt = pathTracer(spt_k, que, d_render, d_G, seeds, cam_forward, cam_up, cam_right, eye_offset, resultInfo.width, resultInfo.height, lws0);
 
 	cl_event getRender_evt;
 

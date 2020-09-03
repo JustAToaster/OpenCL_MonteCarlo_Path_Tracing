@@ -326,10 +326,10 @@ inline float4 Sample(float4 * origin, float4 * direction, mwc64xvec2_state_t * r
 		//Compute potential cell index
 		const int4 index3D = convert_int4((intersection-VLPsBoxMin)/cell_size);
 		const int index = index3D.z*grid_res.x*grid_res.y + index3D.y*grid_res.x + index3D.x;
-		if (index > 0 && index < grid_res.x * grid_res.y * grid_res.z){	//Intersection is inside the grid
+		if (index >= 0 && index < grid_res.x * grid_res.y * grid_res.z){	//Intersection is inside the grid
 			Cell c = VLPsGrid[index];
 			//Compute total illumination factor by checking all virtual point lights in the cell
-			for(uint i=0; i<c.nels; ++i){
+			for(uint i=0; i<c.nels && i<MAX_NELS_PER_CELL; ++i){
 				light_pos = virtual_point_lights[c.elem_index[i]];
 				light_intensity = light_pos.w;
 				light_pos.w = 0;
